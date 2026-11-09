@@ -1,0 +1,258 @@
+import { Check, RotateCcw, ShieldOff, Trash2, UserPlus, UserRoundPlus, UserX, X } from 'lucide-react';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useRoles, useUsers } from '@/api/admin';
+import { useMe } from '@/api/hooks';
+import { useDeactivateUser, useDeletedUsers, useDeleteUser, useRestoreUser } from '@/api/settings';
+import type { DeletedUser, User } from '@/api/types';
+import { errText, FormDialog } from '@/components/FormDialog';
+import { useToast } from '@/components/Toast';
+import { AssignDialog } from '@/components/AssignDialog';
+import { CreateUserDialog, LocalBadges, TwoFactorBadge } from '@/components/UserDialogs';
+import { hasGrant, isAdmin } from '@/lib/perm';
+import { OnlineNow } from '@/pages/OnlineNow';
+import { Departments } from '@/pages/Departments';
+import { IdBadge } from '@/components/PersonTag';
+import { type EmailChangeRequestAdmin, type PhoneChangeRequestAdmin, useDecideEmailChange, useDecidePhoneChange, useEmailChangeRequests, usePhoneChangeRequests } from '@/api/profile';
+import { fmtDateTime } from '@/lib/time';
+
+export const STATUS_TONE: Record<string, string> = { active: 'bg-doneBg text-doneInk', pending_assignment: 'bg-waitBg text-waitInk', suspended: 'bg-lateBg text-lateInk', disabled: 'bg-lockBg text-lockInk' };
+
+export function MfaBadge({ user }: { user: Pick<User, 'mfa_exempt' | 'employee_id' | 'mfa_exempt_until'> }) {
+  const { t } = useTranslation();
+  if (!user.mfa_exempt) return null;
+  return <span className="chip gap-1 bg-waitBg text-waitInk" data-testid={`mfa-badge-${user.employee_id}`} title={user.mfa_exempt_until ? t('mfa.until', { date: user.mfa_exempt_until.slice(0, 10) }) : t('mfa.until_revoked')}><ShieldOff size={12} />{t('mfa.badge')}</span>;
+}
+
+type Act = { kind: 'deactivate' | 'reactivate' | 'delete'; user: User } | { kind: 'restore'; deleted: DeletedUser };
+
+function ActDialog({ act, onClose }: { act: Act; onClose: () => void }) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const status = useDeactivateUser(), del = useDeleteUser(), restore = useRestoreUser();
+  const m = act.kind === 'delete' ? del : act.kind === 'restore' ? restore : status;
+  const done = (k: string) => ({ onSuccess: () => { toast(t(`users.done_${k}`)); onClose(); } });
+  return (
+    <FormDialog open onClose={onClose} testid="user-act-dialog" title={t(`users.${act.kind}_title`, { name: act.kind === 'restore' ? act.deleted.display_name : act.user.display_name })} busy={m.isPending} error={m.isError ? errText(m.error, t) : null}
+      submitLabel={t(`users.${act.kind}`)}
+      onSubmit={(reason) => {
+        if (act.kind === 'delete') del.mutate({ user: act.user, reason }, done('delete'));
+        else if (act.kind === 'restore') restore.mutate({ user: act.deleted, reason }, done('restore'));
+        else status.mutate({ user: act.user, status: act.kind === 'deactivate' ? 'disabled' : 'active', reason }, done(act.kind));
+      }}>
+      {act.kind !== 'restore' && act.kind !== 'reactivate' && <p className="rounded-md bg-card2 p-2 text-sm text-mute" data-testid="user-act-note">{t('users.act_note')}</p>}
+    </FormDialog>
+  );
+}
+
+function DeletedTab() {
+  const { t } = useTranslation();
+  const q = useDeletedUsers(true);
+  const [act, setAct] = useState<Act | null>(null);
+  const items = q.data ?? [];
+  return (
+    <div className="card overflow-x-auto" data-testid="users-deleted">
+      <table className="w-full text-sm">
+        <thead className="border-b border-line bg-card2 text-mute"><tr><th className="p-2 text-start">{t('users.name')}</th><th className="p-2 text-start">{t('common.reason')}</th><th className="p-2 text-start">{t('users.deleted_by')}</th><th className="p-2 text-start">{t('users.deleted_at')}</th><th className="p-2" /></tr></thead>
+        <tbody>
+          {items.map((d) => (
+            <tr key={d.id} className="border-b border-line" data-testid={`deleted-row-${d.employee_id}`}>
+              <td className="p-2"><span className="inline-flex items-baseline gap-1">{d.display_name}{d.employee_id && <IdBadge employeeId={d.employee_id} />}</span></td>
+              <td className="p-2 text-mute">{d.delete_reason}</td>
+              <td className="p-2">{d.deleted_by?.display_name}</td>
+              <td className="mono p-2 text-xs">{d.deleted_at?.slice(0, 10)}</td>
+              <td className="p-2 text-end">
+                <button className="btn" data-testid={`user-restore-${d.employee_id}`} disabled={d.can_restore === false} title={d.restore_blocked_reason ?? undefined} onClick={() => setAct({ kind: 'restore', deleted: d })}><RotateCcw size={14} />{t('users.restore')}</button>
+                {d.can_restore === false && <div className="mt-1 text-xs text-lateInk" data-testid={`restore-blocked-${d.employee_id}`}>{d.restore_blocked_reason}</div>}
+              </td>
+            </tr>
+          ))}
+          {q.isSuccess && !items.length && <tr><td colSpan={5} className="p-6 text-center text-mute" data-testid="deleted-empty">{t('users.deleted_empty')}</td></tr>}
+        </tbody>
+      </table>
+      {act && <ActDialog act={act} onClose={() => setAct(null)} />}
+    </div>
+  );
+}
+
+/** Contract 0.9.2: email change requests waiting for an admin (System Admin, or a delegate holding users.edit for all regions). */
+function EmailChangesTab() {
+  const { t, i18n } = useTranslation();
+  const toast = useToast();
+  const q = useEmailChangeRequests(true);
+  const decide = useDecideEmailChange();
+  const [act, setAct] = useState<{ r: EmailChangeRequestAdmin; decision: 'approve' | 'reject' } | null>(null);
+  const [check, setCheck] = useState('');
+  const items = q.data?.items ?? [];
+  if (q.isError) return <p className="card p-4 text-mute" data-testid="email-changes-forbidden">{errText(q.error, t)}</p>;
+  // 0.12.6 (Q158): an unverified address is approved only with the documented identity check
+  const needsCheck = !!act && act.decision === 'approve' && !act.r.verified_at;
+  return (
+    <div className="card overflow-x-auto" data-testid="email-changes">
+      <table className="w-full text-sm">
+        <thead className="border-b border-line bg-card2 text-mute"><tr><th className="p-2 text-start">{t('users.name')}</th><th className="p-2 text-start">{t('emailChange.old')}</th><th className="p-2 text-start">{t('emailChange.new')}</th><th className="p-2 text-start">{t('emailChange.verified')}</th><th className="p-2 text-start">{t('emailChange.requested')}</th><th className="p-2" /></tr></thead>
+        <tbody>
+          {items.map((r) => (
+            <tr key={r.id} className="border-b border-line" data-testid={`email-change-row-${r.user.employee_id ?? r.user.id}`}>
+              <td className="p-2"><span className="inline-flex items-baseline gap-1">{r.user.display_name}{r.user.employee_id && <IdBadge employeeId={r.user.employee_id} />}</span></td>
+              <td className="p-2 text-mute" dir="ltr">{r.old_email}</td>
+              <td className="p-2 font-semibold" dir="ltr">{r.new_email}</td>
+              <td className="p-2 text-xs" data-testid={`email-change-verified-${r.user.employee_id ?? r.user.id}`}>{r.verified_at ? t('emailChange.verified_yes') : t('emailChange.verified_no')}</td>
+              <td className="p-2 text-xs">{fmtDateTime(r.requested_at, i18n.language)}</td>
+              <td className="p-2 text-end"><span className="inline-flex gap-1">
+                <button className="btn" data-testid={`email-change-approve-${r.user.employee_id ?? r.user.id}`} onClick={() => setAct({ r, decision: 'approve' })}><Check size={14} />{t('emailChange.approve')}</button>
+                <button className="btn" data-testid={`email-change-reject-${r.user.employee_id ?? r.user.id}`} onClick={() => setAct({ r, decision: 'reject' })}><X size={14} />{t('emailChange.reject')}</button>
+              </span></td>
+            </tr>
+          ))}
+          {q.isSuccess && !items.length && <tr><td colSpan={6} className="p-6 text-center text-mute" data-testid="email-changes-empty">{t('emailChange.empty')}</td></tr>}
+        </tbody>
+      </table>
+      {act && (
+        <FormDialog open onClose={() => { decide.reset(); setAct(null); setCheck(''); }} testid="email-change-dialog" busy={decide.isPending} error={decide.isError ? errText(decide.error, t) : null}
+          title={t(act.decision === 'approve' ? 'emailChange.approve_title' : 'emailChange.reject_title', { name: act.r.user.display_name })} submitLabel={t(`emailChange.${act.decision}`)}
+          disabled={needsCheck && check.trim().length < 3}
+          onSubmit={(reason) => decide.mutate({ id: act.r.id, decision: act.decision, reason, ...(needsCheck ? { identity_check: check.trim() } : {}) },
+            { onSuccess: () => { toast(t(`emailChange.done_${act.decision}`)); setAct(null); setCheck(''); } })}>
+          <p className="rounded-md bg-card2 p-2 text-sm" dir="auto">{t('emailChange.dialog_body', { old: act.r.old_email, new: act.r.new_email })}</p>
+          {act.decision === 'approve' && <p className="text-sm text-mute">{t('emailChange.approve_note')}</p>}
+          {needsCheck && (
+            <div>
+              <p className="rounded-md bg-waitBg p-2 text-sm text-waitInk" data-testid="email-change-unverified">{t('emailChange.unverified_note')}</p>
+              <label htmlFor="email-change-check" className="mt-2 block text-sm font-semibold">{t('emailChange.identity_check')}</label>
+              <textarea id="email-change-check" data-testid="email-change-check" className="input mt-1 min-h-16" value={check} onChange={(e) => setCheck(e.target.value)} />
+            </div>
+          )}
+        </FormDialog>
+      )}
+    </div>
+  );
+}
+
+/** Contract 0.12.6 (D156): phone change requests waiting for an admin (same deciders as the email change). */
+function PhoneChangesTab() {
+  const { t, i18n } = useTranslation();
+  const toast = useToast();
+  const q = usePhoneChangeRequests(true);
+  const decide = useDecidePhoneChange();
+  const [act, setAct] = useState<{ r: PhoneChangeRequestAdmin; decision: 'approve' | 'reject' } | null>(null);
+  const items = q.data?.items ?? [];
+  const shown = (v: string | null) => v ?? t('profile.phone_none');
+  if (q.isError) return <p className="card p-4 text-mute" data-testid="phone-changes-forbidden">{errText(q.error, t)}</p>;
+  return (
+    <div className="card overflow-x-auto" data-testid="phone-changes">
+      <table className="w-full text-sm">
+        <thead className="border-b border-line bg-card2 text-mute"><tr><th className="p-2 text-start">{t('users.name')}</th><th className="p-2 text-start">{t('phoneChange.old')}</th><th className="p-2 text-start">{t('phoneChange.new')}</th><th className="p-2 text-start">{t('emailChange.requested')}</th><th className="p-2" /></tr></thead>
+        <tbody>
+          {items.map((r) => (
+            <tr key={r.id} className="border-b border-line" data-testid={`phone-change-row-${r.user.employee_id ?? r.user.id}`}>
+              <td className="p-2"><span className="inline-flex items-baseline gap-1">{r.user.display_name}{r.user.employee_id && <IdBadge employeeId={r.user.employee_id} />}</span></td>
+              <td className="p-2 text-mute" dir="ltr">{shown(r.old_phone)}</td>
+              <td className="p-2 font-semibold" dir="ltr">{shown(r.new_phone)}</td>
+              <td className="p-2 text-xs">{fmtDateTime(r.requested_at, i18n.language)}</td>
+              <td className="p-2 text-end"><span className="inline-flex gap-1">
+                <button className="btn" data-testid={`phone-change-approve-${r.user.employee_id ?? r.user.id}`} onClick={() => setAct({ r, decision: 'approve' })}><Check size={14} />{t('emailChange.approve')}</button>
+                <button className="btn" data-testid={`phone-change-reject-${r.user.employee_id ?? r.user.id}`} onClick={() => setAct({ r, decision: 'reject' })}><X size={14} />{t('emailChange.reject')}</button>
+              </span></td>
+            </tr>
+          ))}
+          {q.isSuccess && !items.length && <tr><td colSpan={5} className="p-6 text-center text-mute" data-testid="phone-changes-empty">{t('phoneChange.empty')}</td></tr>}
+        </tbody>
+      </table>
+      {act && (
+        <FormDialog open onClose={() => { decide.reset(); setAct(null); }} testid="phone-change-dialog" busy={decide.isPending} error={decide.isError ? errText(decide.error, t) : null}
+          title={t(act.decision === 'approve' ? 'phoneChange.approve_title' : 'phoneChange.reject_title', { name: act.r.user.display_name })} submitLabel={t(`emailChange.${act.decision}`)}
+          onSubmit={(reason) => decide.mutate({ id: act.r.id, decision: act.decision, reason }, { onSuccess: () => { toast(t(`phoneChange.done_${act.decision}`)); setAct(null); } })}>
+          <p className="rounded-md bg-card2 p-2 text-sm" dir="auto">{t('phoneChange.dialog_body', { old: shown(act.r.old_phone), new: shown(act.r.new_phone) })}</p>
+          {act.decision === 'approve' && <p className="text-sm text-mute">{t('phoneChange.approve_note')}</p>}
+        </FormDialog>
+      )}
+    </div>
+  );
+}
+
+export function Users() {
+  const { t, i18n } = useTranslation();
+  const ar = i18n.language === 'ar';
+  const me = useMe(true);
+  const loc = useLocation(), go = useNavigate();
+  const search = new URLSearchParams(loc.search);
+  const [listTab, setListTab] = useState<'active' | 'deleted' | 'departments' | 'email_changes' | 'phone_changes'>(search.has('email_changes') ? 'email_changes' : search.has('phone_changes') ? 'phone_changes' : 'active');
+  // Online now is the third sub-tab, beside Deleted; it keeps its own URL (/admin/online).
+  const tab: 'active' | 'deleted' | 'departments' | 'email_changes' | 'phone_changes' | 'online' = loc.pathname.startsWith('/admin/online') ? 'online' : listTab;
+  const canList = !!me.data?.effective.nav.includes('admin.users' as never);
+  // 0.9.2: who decides email changes (the server checks again: System Admin, or a delegate holding users.edit for all regions)
+  const canDecide = isAdmin(me.data) || !!me.data?.effective.grants.some((g) => (g.action as string) === 'edit' && ['users', 'admin.users', '*'].includes(g.module_key as string) && g.region_ids === 'all');
+  const subTabs = [...(canList ? (['active', 'deleted', 'departments'] as const) : []), ...(canList && canDecide ? (['email_changes', 'phone_changes'] as const) : []), ...(hasGrant(me.data, 'manage_users') ? (['online'] as const) : [])];
+  const pick = (k: (typeof subTabs)[number]) => {
+    if (k === 'online') return go('/admin/online');
+    setListTab(k);
+    if (tab === 'online') go('/admin/users');
+  };
+  const [act, setAct] = useState<Act | null>(null);
+  const [f, setF] = useState({ q: '', status: '', role_id: '' });
+  const [sel, setSel] = useState<Record<string, User>>({});
+  const [dlg, setDlg] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const canCreate = isAdmin(me.data) || !!me.data?.effective.grants.some((g) => (g.action as string) === 'create' && ['users', 'admin.users'].includes(g.module_key as string));
+  const users = useUsers(f), roles = useRoles();
+  const items = users.data?.items ?? [];
+  const chosen = Object.values(sel);
+  const toggle = (u: User) => setSel((s) => { const n = { ...s }; if (n[u.id]) delete n[u.id]; else n[u.id] = u; return n; });
+  return (
+    <div data-testid="page-users">
+      <h2 className="text-lg font-bold">{t('peopleAdmin.tab_users')}</h2>
+      <p className="mb-4 text-mute">{t('users.subtitle')}</p>
+      <div role="tablist" className="mb-3 flex gap-1">
+        {subTabs.map((k) => <button key={k} role="tab" aria-selected={tab === k} data-testid={`users-tab-${k}`} className={`btn ${tab === k ? 'btn-accent' : ''}`} onClick={() => pick(k)}>{t(k === 'online' ? 'nav.admin.online' : k === 'departments' ? 'dept.tab' : k === 'email_changes' ? 'emailChange.tab' : k === 'phone_changes' ? 'phoneChange.tab' : `users.tab_${k}`)}</button>)}
+      </div>
+      {tab === 'online' ? <OnlineNow embedded /> : tab === 'email_changes' ? <EmailChangesTab /> : tab === 'phone_changes' ? <PhoneChangesTab /> : tab === 'deleted' ? <DeletedTab /> : tab === 'departments' ? <Departments /> : <>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input className="input max-w-64" data-testid="users-search" aria-label={t('users.search')} placeholder={t('users.search')} value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
+        <select className="input w-auto" data-testid="users-filter-status" aria-label={t('users.status')} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
+          <option value="">{t('users.all_statuses')}</option>
+          {['active', 'pending_assignment', 'suspended', 'disabled'].map((s) => <option key={s} value={s}>{t(`userStatus.${s}`)}</option>)}
+        </select>
+        <select className="input w-auto" data-testid="users-filter-role" aria-label={t('users.role')} value={f.role_id} onChange={(e) => setF({ ...f, role_id: e.target.value })}>
+          <option value="">{t('users.all_roles')}</option>
+          {(roles.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.name_en}</option>)}
+        </select>
+        <span className="flex-1" />
+        {canCreate && <button className="btn" data-testid="users-new" onClick={() => setCreating(true)}><UserRoundPlus size={16} />{t('newUser.open')}</button>}
+        <button className="btn btn-accent" data-testid="users-assign" onClick={() => setDlg(true)}><UserPlus size={16} />{chosen.length ? t('users.assign_selected', { count: chosen.length }) : t('users.assign')}</button>
+      </div>
+      <div className="card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b border-line bg-card2 text-start text-mute"><tr>
+            <th className="w-10 p-2" /><th className="p-2 text-start">{t('users.name')}</th><th className="p-2 text-start">{t('users.email')}</th><th className="p-2 text-start">{t('users.department')}</th><th className="p-2 text-start">{t('users.status')}</th><th className="p-2 text-start">{t('users.flags')}</th><th className="p-2" />
+          </tr></thead>
+          <tbody data-testid="users-list">
+            {items.map((u) => (
+              <tr key={u.id} className="border-b border-line hover:bg-hover" data-testid={`user-row-${u.employee_id ?? u.id}`}>
+                <td className="p-2"><input type="checkbox" aria-label={t('users.select', { name: u.display_name })} data-testid={`user-select-${u.employee_id ?? u.id}`} checked={!!sel[u.id]} onChange={() => toggle(u)} /></td>
+                <td className="p-2"><span className="inline-flex items-baseline gap-1">{u.display_name}{u.employee_id && <IdBadge employeeId={u.employee_id} />}</span></td>
+                <td className="p-2 text-mute" dir="ltr">{u.email}</td>
+                <td className="p-2" data-testid={`user-dept-${u.employee_id ?? u.id}`}>{u.department ? (ar && u.department.name_ar) || u.department.name_en : <span className="text-mute">—</span>}</td>
+                <td className="p-2"><span className={`chip ${STATUS_TONE[u.status]}`} data-testid={`user-status-${u.employee_id ?? u.id}`}>{t(`userStatus.${u.status}`)}</span></td>
+                <td className="p-2"><span className="inline-flex flex-wrap gap-1"><LocalBadges user={u} /><TwoFactorBadge user={u} /><MfaBadge user={u} /></span></td>
+                <td className="p-2 text-end"><span className="inline-flex gap-1">
+                  <Link className="btn" data-testid={`user-open-${u.employee_id ?? u.id}`} to={`/admin/users/${u.id}`}>{t('users.open')}</Link>
+                  {(u.status === 'suspended' || u.status === 'disabled')
+                    ? <button className="btn" data-testid={`user-reactivate-${u.employee_id ?? u.id}`} onClick={() => setAct({ kind: 'reactivate', user: u })}><RotateCcw size={14} />{t('users.reactivate')}</button>
+                    : <button className="btn" data-testid={`user-deactivate-${u.employee_id ?? u.id}`} disabled={u.id === me.data?.user.id} title={u.id === me.data?.user.id ? t('errors.self_beneficiary') : undefined} onClick={() => setAct({ kind: 'deactivate', user: u })}><UserX size={14} />{t('users.deactivate')}</button>}
+                  <button className="btn" data-testid={`user-delete-${u.employee_id ?? u.id}`} disabled={u.id === me.data?.user.id} title={u.id === me.data?.user.id ? t('errors.self_beneficiary') : undefined} onClick={() => setAct({ kind: 'delete', user: u })}><Trash2 size={14} />{t('users.delete')}</button></span></td>
+              </tr>
+            ))}
+            {users.isSuccess && !items.length && <tr><td colSpan={7} className="p-6 text-center text-mute" data-testid="users-empty">{t('users.empty')}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      </>}
+      {act && <ActDialog act={act} onClose={() => setAct(null)} />}
+      {creating && <CreateUserDialog onClose={() => setCreating(false)} />}
+      {dlg && <AssignDialog open onClose={() => { setDlg(false); setSel({}); }} initialMode={chosen.length === 1 ? 'person' : 'role'}
+        initialPeople={chosen.map((u) => ({ id: u.id, display_name: u.display_name, employee_id: u.employee_id ?? '' }))} />}
+    </div>
+  );
+}

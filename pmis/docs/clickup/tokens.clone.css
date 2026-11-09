@@ -1,0 +1,368 @@
+/* PMIS Workspace: ClickUp-grade clone tokens. Layer 3 over apps/web/src/styles/tokens.css (import AFTER it).
+   Swap presets with <html data-preset="pmis|neutral" data-theme="light|dark" data-density="compact|default|comfy" dir="rtl|ltr">.
+   - Screens keep using the layer-2 names (bg card ink mute line accent accentSoft hover done/open/wait/late/lock).
+     This file only re-points them per preset and adds the names the clone needs (selected, rowHover, lineStrong, focusRing, rail...).
+   - "pmis" keeps the current teal accent and the current values; it only adds tokens. "neutral" follows the measured ClickUp
+     neutral chrome (#1f1f1f primary, #f0effe selected, #f9f9f9 sidebar, #efefef row rule). No ClickUp brand gradient, logo or purple accent.
+   - Status meaning is fixed in BOTH presets (done green, open blue, wait amber, late red, lock grey). Presets change chrome, never status.
+   - Contrast: every text/background pair below was checked with replica-design/contrast.py (208 pairs, 0 AA failures),
+     see _work/contrast-report.txt. Milestone chips use a tint + ink text (solid --ms-n behind white text fails AA for ms-2/ms-5).
+   Specificity: :root[data-preset] (0,2,0) beats tokens.css :root / [data-theme=dark] (0,1,0); the dark preset blocks are (0,3,0). */
+
+/* ---------- 1. Shared by both presets: type, layout, density, motion, z, gate ---------- */
+:root {
+  /* Fonts (all OFL). Latin first; Arabic glyphs fall through to the Arabic face automatically, so one stack serves both directions. */
+  /* DEC-01 (2026-11-09): Inter for Latin, Cairo for Arabic. */
+  --font-ui:
+    "Inter", "Cairo", system-ui, "Segoe UI", sans-serif;
+  --font-display:
+    "Inter", "Cairo", system-ui, sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; /* site IDs, record numbers */
+  --font-features:
+    "tnum" 1, "cv11" 1; /* tabular figures everywhere numbers line up */
+
+  /* UI type scale (px / line-height / weight). Arabic gets +0.2 line-height via :lang(ar) below. */
+  --fs-meta: 12px;
+  --lh-meta: 16px; /* counts, recency, field labels in cards */
+  --fs-cell: 13px;
+  --lh-cell: 20px; /* table cells, chips, toolbar */
+  --fs-body: 14px;
+  --lh-body: 20px; /* list rows, sidebar, menus */
+  --fs-h3: 16px;
+  --lh-h3: 24px; /* panel titles */
+  --fs-h2: 18px;
+  --lh-h2: 26px; /* page title in location header */
+  --fs-h1: 24px;
+  --lh-h1: 32px; /* site/record title in the modal (display face) */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --chip-case: uppercase;
+  --chip-track: 0.02em; /* milestone chips only; ignored for Arabic */
+
+  /* App shell (CSS px, measured at 125% zoom and divided by 1.25, then snapped to the 4px grid) */
+  --topbar-h: 40px;
+  --rail-w: 56px; /* = existing compact sidebar width in Shell.tsx */
+  --side-w: 256px; /* default; existing SIDEBAR_MIN 200 / SIDEBAR_MAX 400 stay */
+  --side-row-h: 30px;
+  --loc-h: 44px; /* location header (breadcrumb + view actions) */
+  --views-h: 36px; /* views bar */
+  --toolbar-h: 40px;
+  --chip-h: 28px; /* toolbar chips and buttons */
+  --pill-h: 20px; /* milestone/status pill in group headers and columns */
+  --menu-row-h: 32px;
+  --customize-w: 288px;
+  --me-pop-w: 256px;
+  --colmenu-w: 224px;
+  --viewpicker-w: 320px;
+  --filter-w: 560px;
+  --palette-w: 680px;
+  --palette-top: 72px;
+  --palette-input-h: 48px;
+  --palette-row-h: 36px;
+  --modal-inset: 24px;
+  --modal-header-h: 44px;
+  --activity-w: 400px;
+  --activity-min: 320px;
+  --activity-max: 560px;
+  --board-col-w: 264px;
+  --board-col-gap: 8px;
+  --board-col-pad: 8px;
+  --board-head-h: 40px;
+  --card-min-h: 72px;
+  --cal-rail-w: 310px; /* ClickUp calendar_settings.unscheduledTasksSidebarWidth */
+  --gantt-row-h: 32px;
+  --gantt-bar-h: 16px;
+  --gantt-label-w: 280px;
+  --bulk-h: 48px;
+  --bulk-max-w: 760px;
+  --settings-nav-w: 240px;
+  --settings-content-max: 880px;
+  --toast-w: 360px;
+
+  /* Density: one variable drives row height, the rest follows. Existing rowPad() maps compact/default. */
+  --row-h: 36px;
+  --group-head-h: 40px;
+  --header-h: 32px;
+  --cell-px: 12px;
+
+  /* Radius: buttons/inputs 6, cards/columns 8, popovers 8, modals 12, pills 5 (measured ClickUp ~5) */
+  --r-pill: 5px;
+  --r-ctl: 6px;
+  --r-card: 8px;
+  --r-pop: 8px;
+  --r-modal: 12px;
+  --r-bulk: 10px;
+
+  /* Elevation (keeps existing --shadow-* and adds the drag lift) */
+  --elev-pop: var(--shadow-md);
+  --elev-modal: var(--shadow-xl);
+  --elev-drag: 0 14px 28px -6px rgb(0 0 0 / 0.22), 0 3px 8px rgb(0 0 0 / 0.12);
+  --elev-card-hover: var(--shadow-sm);
+  --scrim-modal: rgb(
+    0 0 0 / 0.6
+  ); /* measured ~60% black behind the task modal */
+  --drag-tilt: 2.5deg; /* measured 2-3 deg; mirrored in RTL below */
+
+  /* Motion budget (measured ClickUp, +/-33ms): menus <100ms, modal ~150-185ms, close instant, drop 170-200ms ease-out */
+  --dur-0: 0ms; /* view switch, row tools, modal/menu close, customize panel */
+  --dur-press: 80ms; /* button press, toggle knob */
+  --dur-hover: 120ms; /* hover fills, caret rotate, card hover lift */
+  --dur-menu: 90ms; /* dropdown, popover, tooltip, column menu, filter popover */
+  --dur-modal: 160ms; /* site modal, dialogs, palette scrim */
+  --dur-drawer: 220ms; /* side drawer (DrawerFrame) slide */
+  --dur-drawer-exit: 140ms;
+  --dur-drop: 180ms; /* board card settles into slot / snaps back */
+  --dur-shake: 200ms; /* rejected drop */
+  --dur-toast: 180ms;
+  --dur-toast-exit: 120ms;
+  --toast-life: 6000ms;
+  --toast-undo-life: 8000ms;
+  --dur-bar: 130ms; /* gantt bar grow, progress meters */
+  --dur-skeleton: 1200ms; /* shimmer period */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* all enters */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* the few exits that animate */
+  --ease-std: cubic-bezier(0.2, 0, 0, 1);
+  --shift-menu: 4px;
+  --shift-toast: 8px;
+  --scale-modal: 0.985;
+  --shake-x: 4px;
+
+  /* Layering */
+  --z-sticky: 10;
+  --z-side: 20;
+  --z-pop: 50;
+  --z-drawer: 60;
+  --z-modal: 70;
+  --z-palette: 80;
+  --z-toast: 90;
+  --z-drag: 100;
+}
+:root[data-density="compact"] {
+  --row-h: 32px;
+  --group-head-h: 36px;
+  --header-h: 30px;
+  --cell-px: 8px;
+}
+:root[data-density="comfy"] {
+  --row-h: 40px;
+  --group-head-h: 44px;
+  --header-h: 34px;
+  --cell-px: 12px;
+}
+:lang(ar) {
+  --chip-case: none;
+  --chip-track: 0;
+  --lh-body: 24px;
+  --lh-cell: 22px;
+  --lh-meta: 18px;
+  --lh-h1: 38px;
+}
+[dir="rtl"] {
+  --drag-tilt: -2.5deg;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-press: 0ms;
+    --dur-hover: 0ms;
+    --dur-menu: 0ms;
+    --dur-modal: 0ms;
+    --dur-drawer: 0ms;
+    --dur-drawer-exit: 0ms;
+    --dur-drop: 0ms;
+    --dur-shake: 0ms;
+    --dur-toast: 0ms;
+    --dur-toast-exit: 0ms;
+    --dur-bar: 0ms;
+    --dur-skeleton: 0ms;
+    --drag-tilt: 0deg;
+    --shake-x: 0px;
+    --shift-menu: 0px;
+    --shift-toast: 0px;
+    --scale-modal: 1;
+  }
+}
+
+/* ---------- 2. Preset "pmis" (default): current values, teal accent; adds the clone-only names ---------- */
+:root,
+:root[data-preset="pmis"] {
+  --canvas: var(--card); /* main content surface (white) */
+  --rail: var(--side);
+  --railInk: var(--mute);
+  --railOn: var(--sideOn);
+  --primary: var(--accent); /* primary button / "Add site" */
+  --primaryInk: var(--accentInk);
+  --selected: var(
+    --accentSoft
+  ); /* selected sidebar item, active chip, selected row */
+  --selectedInk: var(--accentText);
+  --rowHover: var(--hover);
+  --rowRule: var(
+    --line
+  ); /* horizontal rules only in List; Table adds vertical */
+  --lineStrong: var(
+    --outline-gray-5
+  ); /* input borders, placeholder dashes: 4.2:1 on card (ui needs 3:1); outline-gray-4 is only 2.8:1 */
+  --focusRing: var(
+    --accent
+  ); /* 2px ring, 2px offset; replaces the low-contrast --focus grey */
+  --tabUnderline: var(--accent);
+  --lateOn: var(
+    --ink-base
+  ); /* fixes Shell.tsx:182 bell badge (bg-late + text-accentInk is 3.3:1 in dark) */
+  --bulkBg: var(--ink);
+  --bulkInk: var(--card);
+}
+:root[data-theme="dark"],
+:root[data-preset="pmis"][data-theme="dark"] {
+  --rowHover: color-mix(
+    in srgb,
+    var(--ink) 8%,
+    var(--card)
+  ); /* existing dark --hover (#383838) gives mute 4.1:1, this gives 5.2:1 */
+  --lineStrong: var(--outline-gray-5);
+  --focusRing: var(--accentText);
+  --lateOn: #ffffff;
+}
+
+/* ---------- 3. Preset "neutral": ClickUp-measured neutral chrome ---------- */
+:root[data-preset="neutral"] {
+  --bg: #ffffff;
+  --card: #ffffff;
+  --card2: #f7f7f7;
+  --canvas: #ffffff;
+  --side: #f9f9f9;
+  --sideOn: #f0effe;
+  --rail: #f9f9f9;
+  --railInk: #5c5c5c;
+  --railOn: #ececec;
+  --ink: #202020;
+  --mute: #5c5c5c;
+  --faint: #6e6e6e;
+  --line: #efefef;
+  --line2: #f5f5f5;
+  --rowRule: #efefef;
+  --lineStrong: #8c8c8c;
+  --hover: #f5f5f5;
+  --rowHover: #f7f7f7; /* ClickUp's #fbfbfb is near-invisible; one step darker, still neutral */
+  --accent: #1f1f1f;
+  --accentInk: #ffffff; /* "accent" = the neutral primary in this preset */
+  --accentSoft: #f0effe;
+  --accentText: #1f1f1f;
+  --primary: #1f1f1f;
+  --primaryInk: #ffffff;
+  --selected: #f0effe;
+  --selectedInk: #202020;
+  --focusRing: #1f1f1f;
+  --tabUnderline: #1f1f1f;
+  --link: #1f5fbf;
+  --lateOn: #ffffff;
+  --bulkBg: #1f1f1f;
+  --bulkInk: #ffffff;
+  --scrim: rgb(0 0 0 / 0.4);
+  color-scheme: light;
+}
+:root[data-preset="neutral"][data-theme="dark"] {
+  --bg: #191919;
+  --card: #202020;
+  --card2: #262626;
+  --canvas: #202020;
+  --side: #1c1c1c;
+  --sideOn: #2b2940;
+  --rail: #1c1c1c;
+  --railInk: #a6a6a6;
+  --railOn: #2a2a2a;
+  --ink: #ebebeb;
+  --mute: #a6a6a6;
+  --faint: #909090;
+  --line: #2e2e2e;
+  --line2: #262626;
+  --rowRule: #2e2e2e;
+  --lineStrong: #6e6e6e;
+  --hover: #2a2a2a;
+  --rowHover: #272727;
+  --accent: #f2f2f2;
+  --accentInk: #1f1f1f;
+  --accentSoft: #2b2940;
+  --accentText: #ebebeb;
+  --primary: #f2f2f2;
+  --primaryInk: #1f1f1f;
+  --selected: #2b2940;
+  --selectedInk: #ebebeb;
+  --focusRing: #f2f2f2;
+  --tabUnderline: #f2f2f2;
+  --link: #76bef9;
+  --bulkBg: #f2f2f2;
+  --bulkInk: #1f1f1f;
+  --scrim: rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+/* ---------- 4. Per-milestone column tint (both presets, both themes) ----------
+   --ms-1..--ms-10 already exist in tokens.css (milestone order; they avoid the done/late/hold hues).
+   A column, group header or Gantt bar sets data-ms="<milestone order>" and reads --col-*. Mixing with --card keeps it right in dark mode. */
+[data-ms] {
+  --col-solid: var(--ms-1);
+  --col-tint: color-mix(in srgb, var(--col-solid) 6%, var(--card));
+  --col-chip: color-mix(in srgb, var(--col-solid) 16%, var(--card));
+  --col-edge: var(--col-solid);
+  --col-ink: var(--ink);
+}
+[data-ms="1"] {
+  --col-solid: var(--ms-1);
+}
+[data-ms="2"] {
+  --col-solid: var(--ms-2);
+}
+[data-ms="3"] {
+  --col-solid: var(--ms-3);
+}
+[data-ms="4"] {
+  --col-solid: var(--ms-4);
+}
+[data-ms="5"] {
+  --col-solid: var(--ms-5);
+}
+[data-ms="6"] {
+  --col-solid: var(--ms-6);
+}
+[data-ms="7"] {
+  --col-solid: var(--ms-7);
+}
+[data-ms="8"] {
+  --col-solid: var(--ms-8);
+}
+[data-ms="9"] {
+  --col-solid: var(--ms-9);
+}
+[data-ms="10"] {
+  --col-solid: var(--ms-10);
+}
+[data-ms="done"] {
+  --col-solid: var(--done);
+} /* On Air */
+[data-ms="closed"] {
+  --col-solid: var(--lock);
+} /* closed / cancelled, shown only with "Closed" on */
+
+/* ---------- 5. Gate states used by Board drag, locked cells and the gate checklist ---------- */
+:root {
+  --gate-ok-ring: var(--done); /* allowed target column: 2px inset ring */
+  --gate-ok-fill: color-mix(in srgb, var(--done) 6%, var(--card));
+  --gate-skip-ring: var(--wait); /* skip-ahead target: needs the checklist */
+  --gate-skip-fill: var(--waitBg);
+  --gate-skip-ink: var(--waitInk);
+  --gate-locked-fill: color-mix(
+    in srgb,
+    var(--lockBg) 85%,
+    transparent
+  ); /* overlay on a locked column */
+  --gate-locked-ink: var(--lockInk);
+  --gate-reject: var(--late);
+  --gate-pending-opacity: 0.6; /* card waiting for the server */
+  --placeholder-border: 1.5px dashed var(--lineStrong);
+  --placeholder-fill: var(--hover);
+}

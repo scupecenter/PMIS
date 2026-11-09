@@ -1,0 +1,3239 @@
+// PMIS Workspace - Prisma schema (PostgreSQL 16)
+// Migrations only: never hand-edit the database. Raw SQL (append-only trigger, RLS) lives in db/sql/ and is
+// applied through a Prisma migration (prisma migrate dev --create-only, then paste the SQL file).
+// Field names are snake_case on purpose: they match db/sql, the importer mapping.csv and the API contract.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum AuthMethod {
+  local
+  m365
+  break_glass
+}
+
+enum UserStatus {
+  pending_assignment
+  active
+  suspended
+  disabled
+}
+
+enum PermissionLevel {
+  view
+  entry
+  review
+  approve
+  admin
+}
+
+enum TeamKind {
+  cw
+  te
+  both
+  none
+}
+
+enum DelegationTarget {
+  user
+  role
+  group
+}
+
+enum DeliveryScenario {
+  new_build
+  expansion
+  hot_swap
+  cold_swap
+  relocation
+}
+
+enum OverallStatus {
+  not_started
+  in_progress
+  on_hold
+  completed
+  cancelled
+}
+
+enum ScopeFlag {
+  yes
+  na
+}
+
+enum TaskState {
+  locked
+  open
+  entry
+  in_review
+  in_approval
+  approved
+  rejected
+  na
+  skipped
+  suspended
+}
+
+enum WorkflowAction {
+  start
+  review
+  submit
+  approve
+  reject
+  auto_skip
+  claim
+  release
+  reassign
+  admin_override
+  reopen
+}
+
+enum MatrixRule {
+  any_one
+  all_members
+}
+
+enum AssigneeKind {
+  user
+  role
+  group
+}
+
+enum DocKind {
+  scanned_document
+  photo
+  email
+  report
+  excel_template
+}
+
+enum DocPlacementKind {
+  task
+  qc
+  register
+}
+
+enum DocStatus {
+  missing
+  uploaded
+  in_review
+  approved
+  rejected
+  not_required
+}
+
+enum AppliesTo {
+  new_tasks_only
+  open_tasks_too
+}
+
+enum SnagStatus {
+  open
+  fix_uploaded
+  in_review
+  closed
+  cancelled
+}
+
+enum GeofenceResult {
+  inside
+  outside
+  no_gps
+  not_checked
+}
+
+enum BatchStatus {
+  uploaded
+  validated
+  in_review
+  partially_approved
+  approved
+  rejected
+  failed
+}
+
+enum RowAction {
+  create
+  update
+  unchanged
+  error
+}
+
+enum RowDecision {
+  pending
+  approved
+  rejected
+}
+
+enum ChangeKind {
+  scope_change
+  date_change
+  suspension
+  resumption
+  other
+}
+
+enum ChangeStatus {
+  requested
+  approved
+  rejected
+  applied
+}
+
+enum WeightSetCode {
+  project_status
+  health_index
+  delay_attribution
+}
+
+enum WeightSetStatus {
+  draft
+  published
+}
+
+enum FieldEntityType {
+  site
+  milestone
+  gate
+  task_instance
+  rf_design
+  acquisition
+  procurement
+  powerco
+  hpc
+  permit
+  warehouse_item
+  warehouse_serial
+  quality
+  issue
+  risk
+  change_request
+  readiness
+  as_built
+  meeting
+  external_party
+}
+
+enum WorkflowStatus {
+  draft
+  published
+}
+
+enum FieldDataType {
+  text
+  number
+  date
+  list
+  multi_list
+  bool
+  user
+  external_party
+  file
+}
+
+enum FieldAccess {
+  hidden
+  read
+  edit
+}
+
+enum PermissionAction {
+  view
+  create
+  edit
+  delete
+  approve
+  export
+  import
+  download_documents
+  view_audit
+  administer
+  manage_users // migration 0045
+  view_security_log // migration 0045
+}
+
+enum LogLevel {
+  debug
+  info
+  warn
+  error
+}
+
+enum NotifyChannel {
+  in_app
+  email
+}
+
+enum RegisterStatus {
+  open
+  in_progress
+  closed
+  na
+}
+
+enum ExternalPartyType {
+  cw_contractor
+  te_vendor
+  powerco
+  hpc
+  supplier
+  landlord
+  other
+}
+
+// ============================================================================
+// 1. IDENTITY, ROLES, ACCESS
+// ============================================================================
+
+model Region {
+  id      Int     @id // fixed ids 1..7 so RLS can compare integers
+  code    String  @unique // Alpha, Middle, WM, Delta, Bravo, GM, Charlie
+  name_en String
+  name_ar String?
+
+  sites                    Site[]
+  UserRoleAssignmentRegion UserRoleAssignmentRegion[]
+  SlaRule                  SlaRule[]
+  ProgressSnapshot         ProgressSnapshot[]
+  RoleDefaultRegion        RoleDefaultRegion[]
+  DelegationRegion         DelegationRegion[]
+
+  @@map("regions")
+}
+
+// Fully admin-defined and flat: no main/sub-role split (owner decision 2026-10-29, migration 0016 dropped parent_role_id). Never deleted while assigned (FK + trigger).
+model Role {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                   String   @unique
+  name_en                String
+  name_ar                String?
+  description_en         String? // the duties of the role
+  description_ar         String?
+  team                   TeamKind @default(none)
+  default_profile_id     String?  @db.Uuid
+  default_all_regions    Boolean  @default(false) // prefill for new assignments
+  default_all_modules    Boolean  @default(false)
+  can_hold_matrix_levels Boolean  @default(true) // false = may not be a matrix assignee (e.g. Management)
+  sort                   Int      @default(0)
+  is_active              Boolean  @default(true)
+
+  default_profile PermissionProfile?   @relation(fields: [default_profile_id], references: [id])
+  default_regions RoleDefaultRegion[]
+  default_modules RoleDefaultModule[]
+  assignments     UserRoleAssignment[]
+  field_perms     FieldPermission[]
+  delegations     Delegation[]
+
+  @@map("roles")
+}
+
+model RoleDefaultRegion {
+  role_id   String @db.Uuid
+  region_id Int
+  role      Role   @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  region    Region @relation(fields: [region_id], references: [id])
+
+  @@id([role_id, region_id])
+  @@map("role_default_regions")
+}
+
+model RoleDefaultModule {
+  role_id    String @db.Uuid
+  module_key String
+  role       Role   @relation(fields: [role_id], references: [id], onDelete: Cascade)
+
+  @@id([role_id, module_key])
+  @@map("role_default_modules")
+}
+
+model User {
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  m365_object_id       String?     @unique // Entra ID oid claim; null for an account created in PMIS Workspace (local sign-in, migration 0010)
+  email                String      @unique // lower case (check constraint)
+  phone                String?     @unique // E.164, a local sign-in identifier
+  manager_id           String?     @db.Uuid // direct manager (migration 0011); set only through idm_set_user_org
+  department_id        String?     @db.Uuid
+  deleted_at           DateTime?   @db.Timestamptz(6) // soft delete (B14, migration 0012); status is 'disabled' while set
+  deleted_by           String?     @db.Uuid
+  delete_reason        String?
+  status_before_delete UserStatus?
+  display_name         String
+  employee_id          String?     @unique @db.Char(4) // 4-digit, entered at first sign-in
+  status               UserStatus  @default(pending_assignment)
+  locale               String      @default("en")
+  theme                String      @default("light")
+  is_break_glass       Boolean     @default(false)
+  totp_secret_enc      String? // break-glass admin only, encrypted
+  last_login_at        DateTime?   @db.Timestamptz(6)
+  created_at           DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime    @updatedAt @db.Timestamptz(6)
+
+  // Role, sub-role, permission level, team, regions and modules live on the assignments (many-to-many).
+  // There is deliberately no user-level default: effective access is the union of the active assignments.
+  assignments      UserRoleAssignment[]
+  assigned_by_me   UserRoleAssignment[]    @relation("AssignmentAssignedBy")
+  group_members    GroupMember[]
+  delegations_from Delegation[]            @relation("DelegationFrom")
+  delegations_to   Delegation[]            @relation("DelegationTo")
+  local_credential LocalCredential?        @relation("LocalCredentialUser")
+  credentials_set  LocalCredential[]       @relation("LocalCredentialSetBy")
+  sessions         UserSession[]           @relation("SessionUser")
+  sessions_revoked UserSession[]           @relation("SessionRevokedBy")
+  totp             UserTotp?               @relation("TotpUser")
+  totp_set         UserTotp[]              @relation("TotpSetBy")
+  recovery_codes   UserRecoveryCode[]
+  pending_sign_ins AuthPending[]
+  manager          User?                   @relation("UserManager", fields: [manager_id], references: [id], onDelete: SetNull)
+  reports          User[]                  @relation("UserManager")
+  department       Department?             @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  threads_started  MessageThread[]
+  thread_links     MessageParticipant[]
+  messages_written Message[]
+  announcements    Announcement[]
+  announcements_in AnnouncementRecipient[]
+  deleter          User?                   @relation("UserDeletedBy", fields: [deleted_by], references: [id], onDelete: SetNull)
+  deleted_users    User[]                  @relation("UserDeletedBy")
+
+  @@index([status])
+  @@index([manager_id], map: "users_manager_idx")
+  @@index([department_id], map: "users_department_idx")
+  @@map("users")
+}
+
+// Local sign-in (migration 0010, ADR 0012). Not readable by pmis_app: auth_local_* and idm_* functions only.
+model LocalCredential {
+  user_id         String    @id @db.Uuid
+  password_hash   String // argon2id PHC string, made by the API
+  must_change     Boolean   @default(true) // temporary password set by an admin
+  enabled         Boolean   @default(true)
+  set_at          DateTime  @default(now()) @db.Timestamptz(6)
+  set_by          String?   @db.Uuid
+  failed_count    Int       @default(0)
+  locked_until    DateTime? @db.Timestamptz(6) // 15 minutes after 5 failures
+  last_success_at DateTime? @db.Timestamptz(6)
+
+  user   User  @relation("LocalCredentialUser", fields: [user_id], references: [id], onDelete: Cascade)
+  setter User? @relation("LocalCredentialSetBy", fields: [set_by], references: [id])
+
+  @@map("local_credentials")
+}
+
+// Server-side session behind the pmis_session cookie (replaces Redis for now, ADR 0012 §4). Only the token's SHA-256 is stored.
+model UserSession {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token_hash       String     @unique @db.Char(64)
+  user_id          String     @db.Uuid
+  auth_method      AuthMethod
+  csrf_token       String
+  created_at       DateTime   @default(now()) @db.Timestamptz(6)
+  last_activity_at DateTime   @default(now()) @db.Timestamptz(6)
+  expires_at       DateTime   @db.Timestamptz(6) // absolute limit; idle limit is checked against last_activity_at
+  stepup_at        DateTime?  @db.Timestamptz(6)
+  ip               String?    @db.Inet
+  user_agent       String?
+  current_screen   String?
+  revoked_at       DateTime?  @db.Timestamptz(6)
+  revoked_by       String?    @db.Uuid
+  revoke_reason    String?
+  two_factor       Boolean    @default(false) // the session passed a code at sign-in (migration 0033)
+
+  user    User  @relation("SessionUser", fields: [user_id], references: [id])
+  revoker User? @relation("SessionRevokedBy", fields: [revoked_by], references: [id])
+
+  @@map("user_sessions")
+}
+
+// Two-factor (TOTP) of a local account (migration 0033, ADR 0014). Not readable by pmis_app: auth_totp_*, auth_pending_* and idm_*_two_factor functions only.
+model UserTotp {
+  user_id            String    @id @db.Uuid
+  required           Boolean   @default(false) // two-factor is on (set by an admin)
+  secret_enc         String? // AES-256-GCM envelope made by the API; null = not enrolled yet
+  pending_secret_enc String? // secret shown in the QR code, not confirmed yet
+  enrolled_at        DateTime? @db.Timestamptz(6)
+  last_step          BigInt? // replay guard: last accepted 30-second step
+  failed_count       Int       @default(0)
+  last_success_at    DateTime? @db.Timestamptz(6)
+  set_by             String?   @db.Uuid
+  set_at             DateTime  @default(now()) @db.Timestamptz(6)
+  enforced           Boolean   @default(false) // 0044: an admin turned it on or marked it; the user cannot turn it off
+
+  user   User  @relation("TotpUser", fields: [user_id], references: [id], onDelete: Cascade)
+  setter User? @relation("TotpSetBy", fields: [set_by], references: [id])
+
+  @@map("user_totp")
+}
+
+// Self-service email change (migration 0044): the user asks, an admin approves or rejects with a reason; only an approval changes users.email.
+// Not readable by pmis_app: idm_request_email_change, idm_cancel_email_change, idm_decide_email_change, idm_my_email_changes, idm_email_change_list.
+model EmailChangeRequest {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String    @db.Uuid
+  old_email       String
+  new_email       String
+  status          String    @default("pending") // pending | approved | rejected | cancelled
+  requested_at    DateTime  @default(now()) @db.Timestamptz(6)
+  decided_at      DateTime? @db.Timestamptz(6)
+  decided_by      String?   @db.Uuid
+  decision_reason String?
+
+  @@index([user_id, requested_at(sort: Desc)], map: "email_change_requests_user")
+  @@map("email_change_requests")
+}
+
+// One-time recovery codes: only a keyed hash (HMAC-SHA-256) is stored.
+model UserRecoveryCode {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String    @db.Uuid
+  code_hash  String    @db.Char(64)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  used_at    DateTime? @db.Timestamptz(6)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, code_hash])
+  @@map("user_recovery_codes")
+}
+
+// A sign-in that passed the password and waits for the code or the enrolment (cookie pmis_2fa, 5 minutes, single use; only the SHA-256 is stored).
+model AuthPending {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token_hash String    @unique @db.Char(64)
+  user_id    String    @db.Uuid
+  kind       String // two_factor | enrol
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  expires_at DateTime  @db.Timestamptz(6)
+  used_at    DateTime? @db.Timestamptz(6)
+  ip         String?   @db.Inet
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, created_at])
+  @@map("auth_pending")
+}
+
+// One row = one person holding one role (main or sub-role), with its own level, scope and validity. A person can hold many rows.
+model UserRoleAssignment {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String          @db.Uuid
+  role_id          String          @db.Uuid
+  permission_level PermissionLevel @default(view)
+  team             TeamKind        @default(none)
+  valid_from       DateTime        @default(now()) @db.Timestamptz(6)
+  valid_to         DateTime?       @db.Timestamptz(6) // null = until removed
+  all_regions      Boolean         @default(false) // explicit opt-in to every region; false + no region rows = no regions
+  all_modules      Boolean         @default(false) // explicit opt-in to every module
+  is_primary       Boolean         @default(false) // at most one per user (partial unique index, migration 0004)
+  assigned_by      String?         @db.Uuid
+  assigned_at      DateTime        @default(now()) @db.Timestamptz(6)
+
+  user                      User                        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  role                      Role                        @relation(fields: [role_id], references: [id])
+  assigner                  User?                       @relation("AssignmentAssignedBy", fields: [assigned_by], references: [id])
+  regions                   UserRoleAssignmentRegion[]
+  modules                   UserRoleAssignmentModule[]
+  UserRoleAssignmentProfile UserRoleAssignmentProfile[]
+
+  @@index([user_id, valid_to])
+  @@index([role_id])
+  @@map("user_role_assignments")
+}
+
+// Scope is explicit: rows here, or all_regions = true on the assignment. No rows and all_regions = false gives no access
+// (a deferred constraint trigger refuses to commit such an active assignment).
+model UserRoleAssignmentRegion {
+  assignment_id String             @db.Uuid
+  region_id     Int
+  assignment    UserRoleAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+  region        Region             @relation(fields: [region_id], references: [id])
+
+  @@id([assignment_id, region_id])
+  @@index([region_id])
+  @@map("user_role_assignment_regions")
+}
+
+// Rows here, or all_modules = true on the assignment; otherwise no modules.
+model UserRoleAssignmentModule {
+  assignment_id String             @db.Uuid
+  module_key    String // sites, procurement, contractors, powerco, hpc, permits_hse, warehouse, quality, issues, risks, change_control, readiness, as_built, meetings, templates, reports
+  assignment    UserRoleAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+
+  @@id([assignment_id, module_key])
+  @@map("user_role_assignment_modules")
+}
+
+model Group {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String   @unique
+  description      String?
+  is_system_admins Boolean  @default(false) // the System Admins group
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  members    GroupMember[]
+  Delegation Delegation[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  group_id String   @db.Uuid
+  user_id  String   @db.Uuid
+  added_at DateTime @default(now()) @db.Timestamptz(6)
+  group    Group    @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [user_id], references: [id])
+
+  @@id([group_id, user_id])
+  @@index([user_id])
+  @@map("group_members")
+}
+
+// Delegation of any set of (module/screen, action) grants, to a user, a role or a group. Written only by idm_delegate().
+model Delegation {
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  from_user_id         String           @db.Uuid
+  target_kind          DelegationTarget
+  target_user_id       String?          @db.Uuid
+  target_role_id       String?          @db.Uuid
+  target_group_id      String?          @db.Uuid
+  parent_delegation_id String?          @db.Uuid // set when a delegate re-delegates (needs the parent's allow_redelegate)
+  is_full              Boolean          @default(false) // every module and action; otherwise the rows in delegation_grants
+  all_regions          Boolean          @default(false)
+  allow_redelegate     Boolean          @default(false)
+  valid_from           DateTime         @db.Timestamptz(6)
+  valid_to             DateTime?        @db.Timestamptz(6) // null = until revoked
+  revoked              Boolean          @default(false)
+  revoked_at           DateTime?        @db.Timestamptz(6)
+  revoked_by           String?          @db.Uuid
+  reason               String?
+  created_at           DateTime         @default(now()) @db.Timestamptz(6)
+
+  from_user    User               @relation("DelegationFrom", fields: [from_user_id], references: [id])
+  target_user  User?              @relation("DelegationTo", fields: [target_user_id], references: [id])
+  target_role  Role?              @relation(fields: [target_role_id], references: [id])
+  target_group Group?             @relation(fields: [target_group_id], references: [id])
+  parent       Delegation?        @relation("DelegationChain", fields: [parent_delegation_id], references: [id])
+  children     Delegation[]       @relation("DelegationChain")
+  grants       DelegationGrant[]
+  regions      DelegationRegion[]
+
+  @@index([target_user_id, revoked])
+  @@index([target_role_id, revoked])
+  @@index([target_group_id, revoked])
+  @@map("delegations")
+}
+
+model DelegationGrant {
+  delegation_id String           @db.Uuid
+  module_key    String
+  action        PermissionAction
+  delegation    Delegation       @relation(fields: [delegation_id], references: [id], onDelete: Cascade)
+
+  @@id([delegation_id, module_key, action])
+  @@map("delegation_grants")
+}
+
+model DelegationRegion {
+  delegation_id String     @db.Uuid
+  region_id     Int
+  delegation    Delegation @relation(fields: [delegation_id], references: [id], onDelete: Cascade)
+  region        Region     @relation(fields: [region_id], references: [id])
+
+  @@id([delegation_id, region_id])
+  @@map("delegation_regions")
+}
+
+// ============================================================================
+// 2. SITES AND CLUSTERS
+// ============================================================================
+
+model Cluster {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cluster_code        String    @unique // Master G / EN
+  name                String?
+  region_id           Int?
+  is_global           Boolean   @default(false) // explicit global row; NULL region alone never means global
+  kpi_acceptance_date DateTime? @db.Date // recorded once per cluster, applied to all sites
+  kpi_source_date     DateTime? @db.Date
+  kpi_validated       Boolean   @default(false)
+
+  sites Site[]
+
+  @@map("clusters")
+}
+
+model Site {
+  id                      String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_code               String            @unique // Master B Site ID
+  owner_site_id           String? // Master C
+  name                    String
+  name_ar                 String? // 0070 (G9): the Arabic site name; name stays the English one
+  region_id               Int
+  workflow_version_id     String            @db.Uuid // the workflow version this site runs on; changed only by migration
+  sub_region              String?
+  cluster_id              String?           @db.Uuid
+  latitude                Decimal?          @db.Decimal(9, 6)
+  longitude               Decimal?          @db.Decimal(9, 6)
+  address                 String?
+  site_type               String?
+  site_scenario           String? // Master K, RF classification
+  uplink_site             String?
+  tower_owner             String?
+  existing_or_new         String?
+  rt_or_gf                String?
+  tower_type              String?
+  tower_height_m          Decimal?          @db.Decimal(6, 1)
+  config_summary          String? // WL/MW/IP/PWR text (computed in Master)
+  rf_survey_date          DateTime?         @db.Date
+  acquisition_date        DateTime?         @db.Date
+  project_phase           String?
+  delivery_batch          String?
+  delivery_scenario       DeliveryScenario?
+  cw_delivery_model       String? // outsourced / internal
+  // Scope flags (Master AA:AF)
+  scope_tower_erection    ScopeFlag         @default(na)
+  scope_site_adaption     ScopeFlag         @default(na)
+  scope_powerco_power       ScopeFlag         @default(na)
+  scope_hpc_fiber         ScopeFlag         @default(na)
+  scope_te_full           ScopeFlag         @default(na)
+  scope_te_ip_router_only ScopeFlag         @default(na)
+  overall_status          OverallStatus     @default(not_started)
+  current_milestone       String?
+  next_milestone          String?
+  is_active               Boolean           @default(true)
+  created_at              DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime          @updatedAt @db.Timestamptz(6)
+
+  region               Region                 @relation(fields: [region_id], references: [id])
+  workflow             WorkflowDefinition     @relation(fields: [workflow_version_id], references: [id])
+  cluster              Cluster?               @relation(fields: [cluster_id], references: [id])
+  tasks                TaskInstance[]
+  Snag                 Snag[]
+  DocumentSlot         DocumentSlot[]
+  BaselineEntry        BaselineEntry[]
+  ChangeRequest        ChangeRequest[]
+  RfDesignRecord       RfDesignRecord[]
+  AcquisitionCandidate AcquisitionCandidate[]
+  ProcurementRecord    ProcurementRecord[]
+  PowercoRecord          PowercoRecord[]
+  HpcRecord            HpcRecord[]
+  PermitRecord         PermitRecord[]
+  WarehouseSerial      WarehouseSerial[]
+  WarehouseSiteQty     WarehouseSiteQty[]
+  QualityInspection    QualityInspection[]
+  Issue                Issue[]
+  ReadinessHandover    ReadinessHandover[]
+  AsBuiltRecord        AsBuiltRecord[]
+  custom               Json                   @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@unique([id, region_id]) // target of composite FKs (site_id, region_id)
+  @@index([region_id, overall_status])
+  @@index([cluster_id])
+  @@index([delivery_scenario])
+  @@index([project_phase, delivery_batch])
+  @@index([custom], type: Gin)
+  @@map("sites")
+}
+
+// ============================================================================
+// 3. STAGES, TASKS, WORKFLOW, MATRIX
+// ============================================================================
+
+// ============================================================================
+// 3a. WORKFLOW DEFINITION (versioned: stages/milestones, gates, tasks)
+// ============================================================================
+
+// A published version cannot be changed structurally (add/remove/reorder milestone or gate, move a task between stages);
+// light edits (names, gate conditions and SLA, counts-in-status, custom fields) are allowed and audited. Structural change =
+// clone to a draft, edit, publish. Sites are on one version and are migrated explicitly (admin_migrate_sites_to_workflow).
+model WorkflowDefinition {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version        Int            @unique
+  status         WorkflowStatus @default(draft)
+  effective_from DateTime       @db.Date
+  reason         String
+  changed_by     String?        @db.Uuid
+  created_at     DateTime       @default(now()) @db.Timestamptz(6)
+  published_at   DateTime?      @db.Timestamptz(6)
+
+  stages  StageDefinition[]
+  gates   PhaseGateRule[]
+  tasks   TaskDefinition[]
+  sites   Site[]
+  streams WorkflowStream[]
+  views   WorkflowView[]
+
+  @@index([status, effective_from])
+  @@map("workflow_definitions")
+}
+
+// A stage is a milestone (10 in v1). code is stable and immutable (history, KPIs and reports key on it).
+model StageDefinition {
+  id                       String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflow_id              String  @db.Uuid
+  code                     String // MS1..MS10 in v1; stable
+  seq                      Int // unique per workflow (deferrable constraint, migration 0008)
+  name_en                  String
+  name_ar                  String?
+  milestone_name           String
+  master_export_column     String? // column in the Master-format export
+  counts_in_project_status Boolean @default(true)
+  approval_levels          Int     @default(3)
+  is_active                Boolean @default(true)
+  stream_code              String? // the stream (Site Register sub-section) this stage belongs to; migration 0015
+
+  workflow     WorkflowDefinition @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
+  stream       WorkflowStream?    @relation(fields: [workflow_id, stream_code], references: [workflow_id, code])
+  tasks        TaskDefinition[]
+  matrix_cells MatrixCell[]
+  custom       Json               @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@unique([workflow_id, code])
+  @@unique([id, workflow_id])
+  @@index([workflow_id, stream_code], map: "stage_definitions_stream_idx")
+  @@index([custom], type: Gin)
+  @@map("stage_definitions")
+}
+
+// A stream groups stages for the Site Register sub-sections (owner decision 2026-10-29). Versioned with the workflow definition.
+model WorkflowStream {
+  workflow_id String  @db.Uuid
+  code        String
+  name_en     String
+  name_ar     String?
+  sort_order  Int
+
+  workflow WorkflowDefinition @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
+  stages   StageDefinition[]
+
+  @@id([workflow_id, code])
+  @@unique([workflow_id, sort_order])
+  @@map("workflow_streams")
+}
+
+// A view groups tasks for the CW / TE / O&M tabs of the Site Register (owner decision 2026-10-31, Q98; migration 0023). Versioned with the workflow definition.
+model WorkflowView {
+  workflow_id String  @db.Uuid
+  code        String
+  name_en     String
+  name_ar     String?
+  sort_order  Int
+
+  workflow WorkflowDefinition   @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
+  members  WorkflowViewMember[]
+
+  @@id([workflow_id, code])
+  @@unique([workflow_id, sort_order])
+  @@map("workflow_views")
+}
+
+// Membership by stage code or task code. om_assigned: null = always, false = only while the O&M team is not assigned (setting views.om_team_assigned), true = only after.
+model WorkflowViewMember {
+  workflow_id String   @db.Uuid
+  view_code   String
+  member_kind String // stage | task
+  member_code String
+  om_assigned Boolean?
+
+  view WorkflowView @relation(fields: [workflow_id, view_code], references: [workflow_id, code], onDelete: Cascade)
+
+  @@id([workflow_id, view_code, member_kind, member_code])
+  @@map("workflow_view_members")
+}
+
+model TaskDefinition {
+  id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflow_id             String             @db.Uuid
+  code                    String // immutable; unique per workflow; shared with the task catalogue
+  stage_id                String             @db.Uuid // moves between stages only in a draft version
+  sort_order              Int
+  name_en                 String
+  name_ar                 String?
+  has_documents           Boolean            @default(true)
+  is_milestone_task       Boolean            @default(false)
+  counts_toward_milestone Boolean            @default(true) // false = does not block the stage milestone
+  approval_levels         Int? // null = inherit stage
+  condition_rule          Json? // scope-flag / scenario applicability rule
+  default_external_party  ExternalPartyType?
+  is_active               Boolean            @default(true)
+  // versioning (bumped by trigger on every change; before/after values go to audit_log)
+  version                 Int                @default(1)
+  effective_from          DateTime           @default(now()) @db.Date
+  reason                  String?
+  changed_by              String?            @db.Uuid
+  changed_at              DateTime           @default(now()) @db.Timestamptz(6)
+
+  workflow       WorkflowDefinition      @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
+  stage          StageDefinition         @relation(fields: [stage_id, workflow_id], references: [id, workflow_id], onDelete: Cascade)
+  instances      TaskInstance[]
+  matrix_cells   MatrixCell[]
+  doc_placements DocumentTypePlacement[]
+  SlaRule        SlaRule[]
+  predecessors   TaskPredecessor[]       @relation("TaskHasPredecessors")
+  successors     TaskPredecessor[]       @relation("TaskIsPredecessorOf")
+
+  @@unique([workflow_id, code])
+  @@index([stage_id, sort_order])
+  @@map("task_definitions")
+}
+
+// Predecessor links between tasks (any stage). Cycles are rejected by trigger.
+model TaskPredecessor {
+  task_def_id    String         @db.Uuid
+  predecessor_id String         @db.Uuid
+  task           TaskDefinition @relation("TaskHasPredecessors", fields: [task_def_id], references: [id], onDelete: Cascade)
+  predecessor    TaskDefinition @relation("TaskIsPredecessorOf", fields: [predecessor_id], references: [id])
+
+  @@id([task_def_id, predecessor_id])
+  @@index([predecessor_id])
+  @@map("task_predecessors")
+}
+
+model TaskInstance {
+  id                       String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id                  String           @db.Uuid
+  region_id                Int // denormalised from site for RLS and filters
+  site                     Site             @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  task_def_id              String           @db.Uuid
+  state                    TaskState        @default(locked)
+  current_level            Int              @default(0) // 1 entry, 2 review, 3 approve
+  levels_required          Int              @default(3) // frozen at creation
+  ball_in_court_user_id    String?          @db.Uuid
+  ball_in_court_group_id   String?          @db.Uuid
+  ball_in_court_role_id    String?          @db.Uuid
+  external_party_id        String?          @db.Uuid
+  baseline_date            DateTime?        @db.Date
+  planned_date             DateTime?        @db.Date
+  planned_start            DateTime?        @db.Date
+  actual_start             DateTime?        @db.Date
+  actual_date              DateTime?        @db.Date
+  submitted_date           DateTime?        @db.Date
+  approved_date            DateTime?        @db.Date
+  values                   Json? // task-specific extra fields (result, analysis type, status text)
+  sla_rule_id              String?          @db.Uuid // snapshot taken when the task opens; re-pointed only by the admin path
+  sla_rule                 SlaRule?         @relation(fields: [sla_rule_id], references: [id])
+  lock_reason              String?
+  is_na                    Boolean          @default(false)
+  na_reason                String?
+  admin_override           Boolean          @default(false)
+  has_override_flag_in_kpi Boolean          @default(false)
+  due_date                 DateTime?        @db.Date
+  sla_start_date           DateTime?        @db.Date // the start event date of the SLA clock (migration 0017)
+  sla_target_date          DateTime?        @db.Date // start + SLA min (green until here)
+  sla_end_date             DateTime?        @db.Date // the end event, kept when the task is approved
+  sla_elapsed_wd           Int? // working days start to end, kept when the task is approved; running tasks are computed on read
+  path_frozen_at           DateTime?        @db.Timestamptz(6) // B7: the level path is final from the first submission
+  level_round              Int              @default(0)
+  level_opened_at          DateTime?        @db.Timestamptz(6)
+  return_count             Int              @default(0)
+  last_return_note         String?
+  self_approval            Boolean          @default(false)
+  version                  Int              @default(1)
+  created_at               DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime         @updatedAt @db.Timestamptz(6)
+  task_def                 TaskDefinition   @relation(fields: [task_def_id], references: [id])
+  external_party           ExternalParty?   @relation(fields: [external_party_id], references: [id])
+  steps                    WorkflowStep[]
+  slots                    DocumentSlot[]
+  comments                 Comment[]
+  snags                    Snag[]
+  level_actors             TaskLevelActor[]
+  level_voters             TaskLevelVoter[]
+  custom                   Json             @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@unique([id, region_id])
+  @@unique([site_id, task_def_id])
+  @@index([region_id, state])
+  @@index([state, ball_in_court_user_id])
+  @@index([ball_in_court_group_id, state])
+  @@index([ball_in_court_role_id, state])
+  @@index([task_def_id, state])
+  @@index([sla_rule_id])
+  @@index([due_date])
+  @@index([custom], type: Gin)
+  @@map("task_instances")
+}
+
+model WorkflowStep {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  task_id         String         @db.Uuid
+  level           Int
+  action          WorkflowAction
+  holder_user_id  String?        @db.Uuid // resolved holder at that time
+  holder_group_id String?        @db.Uuid
+  acted_by        String?        @db.Uuid
+  on_behalf_of    String?        @db.Uuid // delegation: "X on behalf of System Admin"
+  claimed_by      String?        @db.Uuid
+  note            String? // mandatory on reject
+  admin_override  Boolean        @default(false)
+  override_reason String?
+  stepup_verified Boolean        @default(false)
+  batch_row_id    String?        @db.Uuid
+  before_state    TaskState?
+  after_state     TaskState?
+  self_approval   Boolean        @default(false) // B5: the final level was reached by self-skip, or the task has one level
+  created_at      DateTime       @default(now()) @db.Timestamptz(6)
+
+  task TaskInstance @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@index([task_id, created_at])
+  @@index([acted_by])
+  @@map("workflow_steps")
+}
+
+// Who handled each level in the current pass ('acted' or 'skipped'): decides where a rejection goes (B6). Written only by wf_* functions.
+model TaskLevelActor {
+  task_id  String       @db.Uuid
+  level    Int
+  user_id  String       @db.Uuid
+  how      String
+  acted_at DateTime     @default(now()) @db.Timestamptz(6)
+  task     TaskInstance @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@id([task_id, level])
+  @@map("task_level_actors")
+}
+
+// Members who must vote at a level under the rule all_members, fixed when the level opens.
+model TaskLevelVoter {
+  task_id  String       @db.Uuid
+  level    Int
+  round    Int
+  user_id  String       @db.Uuid
+  voted_at DateTime?    @db.Timestamptz(6)
+  task     TaskInstance @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@id([task_id, level, round, user_id])
+  @@index([user_id], map: "task_level_voters_user_idx")
+  @@map("task_level_voters")
+}
+
+// Responsibility Matrix: stage or task x level -> assignees. task_def_id null = stage default.
+// A cell belongs to a stage (stage_id) or to a register / Dismantle row (register_key), never both (migrations 0019, 0020).
+model MatrixCell {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stage_id    String?    @db.Uuid // NULL on the matrix row of a register (register_key set instead), migration 0019
+  register_key String?   // B11: the register this row belongs to (procurement, powerco, hpc, permits_hse ...)
+  task_def_id String?    @db.Uuid
+  level       Int // 1 entry, 2 review, 3 approve
+  rule        MatrixRule @default(any_one)
+  region_id   Int? // optional region-specific cell
+  is_global   Boolean    @default(false) // explicit global row; NULL region alone never means global
+  updated_by  String?    @db.Uuid
+  updated_at  DateTime   @updatedAt @db.Timestamptz(6)
+  retired_at  DateTime?  @db.Timestamptz(6) // 0050: set on every level-2 (old review) cell; two fixed levels, the data is kept for history
+
+  stage     StageDefinition?     @relation(fields: [stage_id], references: [id])
+  task_def  TaskDefinition?      @relation(fields: [task_def_id], references: [id])
+  assignees MatrixCellAssignee[]
+
+  @@unique([stage_id, task_def_id, level, region_id])
+  @@index([stage_id, level])
+  @@map("matrix_cells")
+}
+
+// One row: the revision of the whole matrix (ETag of GET /matrix, If-Match of PATCH /matrix).
+model MatrixState {
+  id         Boolean  @id @default(true)
+  revision   Int      @default(1)
+  updated_by String?  @db.Uuid
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("matrix_state")
+}
+
+model MatrixCellAssignee {
+  id      String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cell_id String       @db.Uuid
+  kind    AssigneeKind
+  ref_id  String       @db.Uuid // user / role / group id according to kind
+  cell    MatrixCell   @relation(fields: [cell_id], references: [id], onDelete: Cascade)
+
+  @@unique([cell_id, kind, ref_id])
+  @@index([kind, ref_id])
+  @@map("matrix_cell_assignees")
+}
+
+// Vendors, contractors, POWERCO, HPC, suppliers: never log in, shown on tasks for delay attribution.
+model ExternalParty {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String            @unique
+  type           ExternalPartyType
+  company_type   String?
+  contract_ref   String?
+  contract_start DateTime?         @db.Date
+  contract_end   DateTime?         @db.Date
+  is_active      Boolean           @default(true)
+
+  tasks TaskInstance[]
+  teams ExternalTeam[]
+
+  custom Json @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([custom], type: Gin)
+  @@map("external_parties")
+}
+
+model ExternalTeam {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  party_id       String        @db.Uuid
+  name           String
+  team_type      String?
+  specialization String?
+  is_active      Boolean       @default(true)
+  party          ExternalParty @relation(fields: [party_id], references: [id])
+
+  @@unique([party_id, name])
+  @@map("external_teams")
+}
+
+// ============================================================================
+// 4. DOCUMENT LIBRARY, SLOTS, FILES
+// ============================================================================
+
+model DocumentType {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code               String    @unique // A1, A2, B1 ...
+  name_en            String
+  name_ar            String?
+  kind               DocKind   @default(scanned_document)
+  is_mandatory       Boolean   @default(true)
+  condition_rule     Json? // when conditional, e.g. {"all":[{"site.scope_tower_erection":"yes"}]}
+  formats            String[]  @default(["pdf", "jpg", "jpeg", "png"])
+  max_size_mb        Int       @default(20)
+  min_files          Int       @default(1)
+  max_files          Int? // null = unlimited
+  photo_rules        Json? // required shot types, min count, EXIF rule
+  has_expiry         Boolean   @default(false)
+  expiry_field       String?
+  blank_form_file_id String?   @db.Uuid
+  applies_to         AppliesTo @default(new_tasks_only)
+  is_active          Boolean   @default(true) // deactivated, never deleted
+  version            Int       @default(1)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @updatedAt @db.Timestamptz(6)
+  // 0038: a generated form has form_kind; published_version 0 = never published; lib_managed = edited through the Document Library
+  form_kind          String?
+  published_version  Int       @default(0)
+  lib_managed        Boolean   @default(false)
+  needs_review       Boolean   @default(false)
+
+  placements DocumentTypePlacement[]
+  slots      DocumentSlot[]
+  versions   DocumentTypeVersion[]
+  draft      DocumentTypeDraft?
+  blank_forms DocumentBlankForm[]
+
+  @@map("document_types")
+}
+
+model DocumentTypePlacement {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doc_type_id  String           @db.Uuid
+  kind         DocPlacementKind
+  task_def_id  String?          @db.Uuid
+  snag_type_id String?          @db.Uuid
+  register_key String? // e.g. permits_hse, procurement
+  record_type  String? // 0047: a register placement may name one record type of the register
+
+  doc_type  DocumentType    @relation(fields: [doc_type_id], references: [id])
+  task_def  TaskDefinition? @relation(fields: [task_def_id], references: [id])
+  snag_type SnagType?       @relation(fields: [snag_type_id], references: [id])
+
+  @@index([doc_type_id])
+  @@index([task_def_id])
+  @@map("document_type_placements")
+}
+
+model DocumentSlot {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  task_id         String?   @db.Uuid
+  site_id         String    @db.Uuid
+  region_id       Int
+  site            Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  doc_type_id     String    @db.Uuid
+  candidate_label String? // e.g. each SAR candidate
+  status          DocStatus @default(missing)
+  reject_reason   String?
+  valid_to        DateTime? @db.Date // expiry
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  doc_type_version_id  String?  @db.Uuid // 0038: the published version the slot was built from
+  conditional_declared Boolean  @default(false)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+  register_entity_id   String?  @db.Uuid // 0047 (Q131): a slot of a register record, keyed on its logical record (task_id is then null)
+  register_key         String?
+
+  task     TaskInstance?  @relation(fields: [task_id], references: [id])
+  doc_type DocumentType   @relation(fields: [doc_type_id], references: [id])
+  files    DocumentFile[]
+
+  @@index([task_id])
+  @@index([site_id, doc_type_id])
+  @@index([region_id, status])
+  @@map("document_slots")
+}
+
+// Superseded versions are kept: (slot_id, file_group_id, version).
+model DocumentFile {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slot_id       String    @db.Uuid
+  file_group_id String    @db.Uuid // same logical file across versions
+  version       Int       @default(1)
+  is_current    Boolean   @default(true)
+  original_name String
+  stored_name   String // SITE_TASK_DOC_APPROVEDDATE.ext
+  storage_key   String // MinIO object key
+  mime_type     String
+  size_bytes    BigInt
+  sha256        String
+  uploaded_by   String    @db.Uuid
+  uploaded_at   DateTime  @default(now()) @db.Timestamptz(6)
+  approved_date DateTime? @db.Date
+  // 0038
+  ext                  String?
+  capture_date         DateTime? @db.Timestamptz(6)
+  unknown_capture_date Boolean   @default(false)
+  superseded_by        String?   @db.Uuid
+  withdrawn_at         DateTime? @db.Timestamptz(6)
+  withdrawn_by         String?   @db.Uuid
+
+  slot DocumentSlot @relation(fields: [slot_id], references: [id])
+
+  @@unique([file_group_id, version])
+  @@index([slot_id, is_current])
+  @@index([sha256])
+  @@map("document_files")
+}
+
+// 0038: immutable published versions, the draft being edited, blank forms, the slot snapshot of a task, zip jobs.
+model DocumentTypeVersion {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doc_type_id         String   @db.Uuid
+  version_no          Int
+  spec                Json
+  is_mandatory        Boolean
+  is_active           Boolean
+  effective_from      DateTime @default(now()) @db.Date
+  apply_to            String   @default("new_only")
+  reason              String
+  affected_open_tasks Int      @default(0)
+  published_by        String?  @db.Uuid
+  published_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  doc_type DocumentType @relation(fields: [doc_type_id], references: [id])
+
+  @@unique([doc_type_id, version_no])
+  @@map("document_type_versions")
+}
+
+model DocumentTypeDraft {
+  doc_type_id String   @id @db.Uuid
+  spec        Json
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_by  String?  @db.Uuid
+
+  doc_type DocumentType @relation(fields: [doc_type_id], references: [id])
+
+  @@map("document_type_drafts")
+}
+
+model DocumentBlankForm {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doc_type_id   String   @db.Uuid
+  original_name String
+  storage_key   String
+  mime_type     String
+  ext           String
+  size_bytes    BigInt
+  sha256        String
+  uploaded_by   String   @db.Uuid
+  uploaded_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  doc_type DocumentType @relation(fields: [doc_type_id], references: [id])
+
+  @@map("document_blank_forms")
+}
+
+/// 0047 (Q131): the slot set of a logical register record was built (snapshot on open).
+model DocumentRecordSnapshot {
+  entity_id String   @id @db.Uuid
+  taken_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("document_record_snapshots")
+}
+
+model DocumentTaskSnapshot {
+  task_id  String   @id @db.Uuid
+  taken_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("document_task_snapshots")
+}
+
+model DocumentExportJob {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requested_by String    @db.Uuid
+  scope        Json
+  status       String    @default("queued")
+  progress     Decimal   @default(0)
+  file_count   Int?
+  size_bytes   BigInt?
+  storage_key  String?
+  error        String?
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  finished_at  DateTime? @db.Timestamptz(6)
+  expires_at   DateTime? @db.Timestamptz(6)
+
+  @@map("document_export_jobs")
+}
+
+// ============================================================================
+// 5. QC SNAGS AND PHOTO EVIDENCE
+// ============================================================================
+
+model SnagType {
+  id                            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                          String   @unique
+  name_en                       String
+  name_ar                       String?
+  min_photos                    Int      @default(1)
+  required_shots                Json? // ["before","after","wide"]
+  formats                       String[] @default(["jpg", "png", "heic"])
+  max_size_mb                   Int      @default(20)
+  blocks_preliminary_acceptance Boolean  @default(true)
+  is_active                     Boolean  @default(true)
+  version                       Int      @default(1) // 0047: If-Match of admin_save_snag_type
+
+  snags          Snag[]
+  doc_placements DocumentTypePlacement[]
+
+  @@map("snag_types")
+}
+
+model Snag {
+  id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id              String        @db.Uuid
+  region_id            Int
+  site                 Site          @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  task_id              String?       @db.Uuid // task whose approval it blocks
+  snag_type_id         String        @db.Uuid
+  scope                String // CW or TE
+  stage_ref            String? // CW PAC, TE PAC, CW FAC, TE FAC
+  description          String
+  severity             String?
+  status               SnagStatus    @default(open)
+  raised_by            String        @db.Uuid
+  raised_at            DateTime      @default(now()) @db.Timestamptz(6)
+  target_date          DateTime?     @db.Date
+  closed_at            DateTime?     @db.Timestamptz(6)
+  closed_by            String?       @db.Uuid
+  responsible_party_id String?       @db.Uuid
+  // 0047 (Q132): the two-level flow of the fix photos
+  title                 String?
+  version               Int           @default(1)
+  return_count          Int           @default(0)
+  last_return_note      String?
+  ball_in_court_user_id String?       @db.Uuid
+  submitted_at          DateTime?     @db.Timestamptz(6)
+  submitted_by          String?       @db.Uuid
+  self_approval         Boolean       @default(false)
+  updated_at            DateTime      @default(now()) @db.Timestamptz(6)
+  task                 TaskInstance? @relation(fields: [task_id], references: [id])
+  snag_type            SnagType      @relation(fields: [snag_type_id], references: [id])
+  photos               SnagPhoto[]
+
+  @@index([site_id, status])
+  @@index([region_id, status])
+  @@index([task_id, status])
+  @@map("snags")
+}
+
+model SnagPhoto {
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  snag_id              String         @db.Uuid
+  shot_type            String?
+  storage_key          String
+  mime_type            String
+  size_bytes           BigInt
+  sha256               String
+  exif_date            DateTime?      @db.Timestamptz(6)
+  unknown_capture_date Boolean        @default(false)
+  before_snag_raised   Boolean        @default(false) // rejected when true
+  gps_lat              Decimal?       @db.Decimal(9, 6)
+  gps_lon              Decimal?       @db.Decimal(9, 6)
+  distance_m           Decimal?       @db.Decimal(9, 1)
+  geofence_result      GeofenceResult @default(not_checked)
+  geofence_radius_m    Int            @default(300)
+  captured_in_app      Boolean        @default(false)
+  stamp_meta           Json? // site id, name, address, coordinates, engineer, task
+  uploaded_by          String         @db.Uuid
+  uploaded_at          DateTime       @default(now()) @db.Timestamptz(6)
+  review_note          String?
+  ext                  String? // 0047
+  withdrawn_at         DateTime?      @db.Timestamptz(6)
+  withdrawn_by         String?        @db.Uuid
+  rejected_at          DateTime?      @db.Timestamptz(6) // rejected by L2 with review_note
+
+  snag Snag @relation(fields: [snag_id], references: [id], onDelete: Cascade)
+
+  @@index([snag_id])
+  @@index([geofence_result])
+  @@map("snag_photos")
+}
+
+// ============================================================================
+// 6. TEMPLATES AND IMPORT BATCHES
+// ============================================================================
+
+// Migration 0037: one template per register (kind = register), later per stream and the full Master. The version rows carry the field-set hash;
+// exactly one version is current, older ones are retired. Written only by tpl_sync / tpl_sync_all (SECURITY DEFINER).
+model TemplateDefinition {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  template_id      String   @unique // embedded in hidden sheet _tpl
+  name             String
+  target_entity    String // sites, task_dates, procurement ...
+  is_master_format Boolean  @default(false)
+  is_active        Boolean  @default(true)
+  kind             String   @default("register") // register, stream, master
+  register_key     String?
+  stream_code      String?
+  name_ar          String?
+  module_key       String?
+  current_version  Int      @default(1)
+  match_keys       Json     @default("[]") // natural keys of a register row, tried in order
+  custom_entity    String? // FieldEntityType of the custom fields that appear in the template
+  sort_order       Int      @default(0)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  versions TemplateVersion[]
+
+  @@map("template_definitions")
+}
+
+model TemplateVersion {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  template_def_id   String    @db.Uuid
+  version           Int
+  header_checksum   String // sha256 of the header row; mismatch rejects the upload
+  field_set_version Int       @default(1) // field_set_versions.version of the target entity when built
+  columns           Json // ordered column spec and validation
+  storage_key       String?
+  is_current        Boolean   @default(true)
+  published_by      String?   @db.Uuid
+  published_at      DateTime  @default(now()) @db.Timestamptz(6)
+  field_set_hash    String? // sha256 of the ordered column specification: a different hash issues the next version
+  retired_at        DateTime? @db.Timestamptz(6)
+  reason            String?
+
+  template TemplateDefinition @relation(fields: [template_def_id], references: [id])
+  batches  ImportBatch[]
+
+  @@unique([template_def_id, version])
+  @@map("template_versions")
+}
+
+// status: parsing, validated, in_review, in_approval, partially_approved, approved, rejected, applied, undone, failed, discarded (a CHECK, 0037).
+// Written only by imp_stage_batch, imp_submit_batch and imp_decide_batch.
+model ImportBatch {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  template_version_id String    @db.Uuid
+  source              String    @default("template") // template, master_import
+  file_name           String
+  file_sha256         String
+  status              String    @default("validated")
+  uploaded_by         String    @db.Uuid
+  region_scope        Int[] // regions touched, for RLS
+  rows_total          Int       @default(0)
+  rows_error          Int       @default(0)
+  approve_mode        String? // row_by_row or all_at_once
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  approved_at         DateTime? @db.Timestamptz(6)
+  register_key        String?
+  task_id             String?   @db.Uuid
+  site_id             String?   @db.Uuid
+  version             Int       @default(1)
+  note                String?
+  submitted_at        DateTime? @db.Timestamptz(6)
+  submitted_by        String?   @db.Uuid
+  closed_at           DateTime? @db.Timestamptz(6)
+  stream_code         String? // a stream batch: the rows are tasks of this stream (0051)
+  entity              String? // 0070: site = a New sites batch (its rows become site drafts, then sites when L2 approves)
+  group_id            String?   @db.Uuid // the batches of one TPL-MASTER file
+  part_sheet          String? // the sheet of the file this batch came from
+  mode                  String    @default("submit") // submit or draft (Save Draft / Planning, Q206; 0060)
+  file_template_version Int? // D112: the older template version of the file when only non-input columns had changed (0060)
+
+  template_version TemplateVersion  @relation(fields: [template_version_id], references: [id])
+  rows             ImportBatchRow[]
+
+  @@index([status, created_at])
+  @@index([uploaded_by])
+  @@map("import_batches")
+}
+
+// action: create, update, unchanged, error. decision: pending, approved, rejected, pending_previous_approval (CHECKs, 0037).
+model ImportBatchRow {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id           String    @db.Uuid
+  row_no             Int
+  site_code          String?
+  region_id          Int?
+  target_entity      String
+  target_id          String?   @db.Uuid
+  action             String    @default("create")
+  payload            Json // parsed row: { data, custom }
+  diff               Json? // field code -> {old, new}
+  errors             Json?
+  decision           String    @default("pending")
+  decided_by         String?   @db.Uuid
+  decided_at         DateTime? @db.Timestamptz(6)
+  decision_note      String?
+  sheet              String    @default("Data")
+  row_key            String?
+  site_id            String?   @db.Uuid
+  record_type        String?
+  matched_entity_id  String?   @db.Uuid // the logical record the row was matched to
+  base_record_id     String?   @db.Uuid // the version the diff was built against
+  register_record_id String?   @db.Uuid // the register record created when the batch was sent
+  hold_reason        String?
+  decided_role       String?
+  task_instance_id   String?   @db.Uuid // a task row (stream template): the task of the site the row enters
+  task_code          String?
+  warnings           Json? // never blocking: SLA, calculated column, held for a predecessor
+  ord                Int       @default(0) // the order of the rows in the preview (several task rows share one file row)
+  source_ref         String? // Sheet!row of the file (the comparison report of the parallel run)
+  task_submitted_at  DateTime? @db.Timestamptz(6)
+  site_draft_id      String?   @db.Uuid // 0070: the site draft this row created when the batch was sent
+
+  batch ImportBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+
+  @@index([batch_id, decision])
+  @@index([site_code])
+  @@map("import_batch_rows")
+}
+
+// The Master sheet in Master order (187 columns) with the owner of each column (0051). Configuration: written only by the admin functions, read by the template builders.
+model MasterColumn {
+  ord       Int     @id
+  letter    String  @unique
+  group_top String?
+  group_mid String?
+  name      String?
+  header    String  @unique
+  owner     String // row, key, identity, baseline, scope, calc, task, dismantle, issues
+  is_active Boolean @default(true)
+
+  fields TemplateTaskField[]
+
+  @@map("master_columns")
+}
+
+// The task fields a stream template (and the Master sheet) carries beyond the generic planned and actual date (0051). field_key: planned_date, planned_start,
+// actual_start, actual_date, submitted_date, approved_date, external_party, v:<key> (a key of the task values) or r:<register>.<field> (register-owned, never written).
+model TemplateTaskField {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  task_code  String
+  field_key  String
+  label      String
+  label_ar   String?
+  field_type String  @default("text")
+  options    Json?
+  master_col String?
+  read_only  Boolean @default(false)
+  is_active  Boolean @default(true)
+  scenarios  String[] // Q205 (0060): the delivery scenarios of the row; NULL = all
+  projection String? // Q205 (0060): earliest or latest, when several tasks fill the Master column
+
+  master_column MasterColumn? @relation(fields: [master_col], references: [letter], onUpdate: Cascade)
+
+  @@unique([task_code, field_key])
+  @@map("template_task_fields")
+}
+
+// Q10 (0060): a value of another file that means a region ("Alpha Area"). Written only by imp_alias_save.
+model RegionAlias {
+  alias      String   @id
+  label      String
+  region_id  Int
+  is_active  Boolean  @default(true)
+  note       String?
+  updated_by String?  @db.Uuid
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("region_aliases")
+}
+
+// Q8 (0060): a Master StaffRole value and PMIS Workspace role it means (mapped, ambiguous or unmapped). Never a grant. Written only by imp_alias_save.
+model RoleAlias {
+  alias      String   @id
+  label      String
+  role_id    String?  @db.Uuid
+  status     String
+  is_active  Boolean  @default(true)
+  note       String?
+  updated_by String?  @db.Uuid
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("role_aliases")
+}
+
+// Q1 / Q211 (0060): one upload of the real Site Master through the admin-only legacy path. Written only by mi_stage_run and mi_apply_run.
+model MasterReconciliationRun {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  file_name    String
+  file_sha256  String
+  file_size    BigInt
+  storage_key  String?
+  structure    Json
+  summary      Json      @default("{}")
+  status       String    @default("previewed") // previewed, applied
+  created_by   String    @db.Uuid
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  applied_by   String?   @db.Uuid
+  applied_at   DateTime? @db.Timestamptz(6)
+  apply_reason String?
+  apply_mode   String?
+  group_id     String?   @db.Uuid
+  outcome      Json?
+  version      Int       @default(1)
+
+  rows  MasterReconciliationRow[]
+  diffs MasterReconciliationDiff[]
+
+  @@index([created_at(sort: Desc), id(sort: Desc)], map: "master_reconciliation_runs_created_idx")
+  @@index([file_sha256], map: "master_reconciliation_runs_sha_idx")
+  @@map("master_reconciliation_runs")
+}
+
+model MasterReconciliationRow {
+  run_id    String  @db.Uuid
+  row_no    Int
+  site_code String?
+  site_id   String? @db.Uuid
+  region_id Int?
+  cells     Json
+
+  run MasterReconciliationRun @relation(fields: [run_id], references: [id], onDelete: Restrict)
+
+  @@id([run_id, row_no])
+  @@map("master_reconciliation_rows")
+}
+
+// One difference or exception of the comparison report (Q211). Its resolution is written only by mi_resolve_diff.
+model MasterReconciliationDiff {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  run_id          String    @db.Uuid
+  ord             Int
+  sheet           String
+  row_no          Int?
+  source_ref      String?
+  site_code       String?
+  site_id         String?   @db.Uuid
+  region_id       Int?
+  master_col      String?
+  header          String?
+  field           String?
+  master_value    String?
+  pmis_value      String?
+  kind            String // diff, missing_in_pmis, missing_in_master, exception
+  reason          String
+  applicable      Boolean   @default(false)
+  resolution      String    @default("open")
+  resolution_note String?
+  resolved_by     String?   @db.Uuid
+  resolved_at     DateTime? @db.Timestamptz(6)
+
+  run MasterReconciliationRun @relation(fields: [run_id], references: [id], onDelete: Restrict)
+
+  @@index([run_id, ord], map: "master_reconciliation_diffs_run_idx")
+  @@index([run_id, site_code], map: "master_reconciliation_diffs_site_idx")
+  @@map("master_reconciliation_diffs")
+}
+
+// exclude: the task is on no stream template; readonly: shown, never written (0051).
+model TemplateTaskRule {
+  task_code String  @id
+  mode      String
+  reason    String?
+
+  @@map("template_task_rules")
+}
+
+// The sheet names of the register sheets of TPL-MASTER (0051).
+model TemplatePart {
+  template_id  String
+  register_key String
+  sheet_name   String
+  sort_order   Int    @default(0)
+
+  @@id([template_id, register_key])
+  @@unique([template_id, sheet_name])
+  @@map("template_parts")
+}
+
+// ============================================================================
+// 7. COMMENTS, NOTIFICATIONS, HOLIDAYS, BASELINE, CHANGE CONTROL
+// ============================================================================
+
+model Comment {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  task_id           String?          @db.Uuid
+  region_id         Int // from the task (composite FK) or the register row
+  entity_type       String? // for register records
+  entity_id         String?          @db.Uuid
+  author_id         String           @db.Uuid
+  body              String
+  is_rejection_note Boolean          @default(false)
+  created_at        DateTime         @default(now()) @db.Timestamptz(6)
+  task              TaskInstance?    @relation(fields: [task_id, region_id], references: [id, region_id], onUpdate: Cascade, onDelete: Cascade)
+  mentions          CommentMention[]
+
+  @@index([task_id, created_at])
+  @@index([entity_type, entity_id])
+  @@map("comments")
+}
+
+model CommentMention {
+  comment_id String  @db.Uuid
+  user_id    String  @db.Uuid
+  comment    Comment @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@id([comment_id, user_id])
+  @@map("comment_mentions")
+}
+
+model Notification {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String        @db.Uuid
+  channel    NotifyChannel @default(in_app)
+  kind       String // assigned, rejected, overdue, delegation ...
+  title      String
+  body       String?
+  task_id    String?       @db.Uuid
+  link       String?
+  read_at    DateTime?     @db.Timestamptz(6)
+  snoozed_until DateTime?  @db.Timestamptz(6) // X1 (migration 0031): hidden from the inbox until then
+  region_id  Int? // 0040: where it points (task region or record region); the inbox hides it when the caller can no longer read that
+  module_key String? // 0040: sites, or the register's module
+  sent_at    DateTime?     @db.Timestamptz(6)
+  created_at DateTime      @default(now()) @db.Timestamptz(6)
+
+  @@index([user_id, read_at])
+  @@index([channel, sent_at])
+  @@map("notifications")
+}
+
+// Weekend days per calendar (0 = Sunday ... 6 = Saturday). Default: Friday and Saturday (NETWORKDAYS.INTL code 7).
+model WorkCalendar {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String  @unique
+  name         String
+  weekend_days Int[]   @default([5, 6])
+  is_default   Boolean @default(false) // exactly one default (partial unique index, migration 0005)
+  is_active    Boolean @default(true)
+  version      Int     @default(1) // bumped by trigger on every change (migration 0017)
+
+  holidays  Holiday[]
+  sla_rules SlaRule[]
+
+  @@map("work_calendars")
+}
+
+model Holiday {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  calendar_id  String       @db.Uuid
+  date         DateTime     @db.Date
+  name         String
+  name_ar      String?
+  kind         String       @default("national") // national | religious (CHECK holidays_kind_check, migration 0013)
+  tentative    Boolean      @default(false) // religious dates stay tentative until the admin confirms them (B12)
+  note         String?
+  version      Int          @default(1) // bumped by trigger (migration 0017)
+  confirmed_at DateTime?    @db.Timestamptz(6)
+  confirmed_by String?      @db.Uuid
+  calendar     WorkCalendar @relation(fields: [calendar_id], references: [id])
+
+  @@unique([calendar_id, date])
+  @@map("holidays")
+}
+
+// Versioned SLA rule. min = target (green), max = limit (above = late), counted in working days of the calendar from
+// start_event (a task code, milestone code MS1..MS10 or gate code G2..G10). Scenario/region NULL = applies to all.
+// Overlap of effective ranges for the same task+scenario+region is rejected by an exclusion constraint (migration 0005).
+// Edits create a new row; a rule referenced by task instances is immutable apart from effective_to.
+model SlaRule {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  task_def_id      String            @db.Uuid
+  min_working_days Int
+  max_working_days Int
+  start_event      String
+  scenario         DeliveryScenario?
+  region_id        Int?
+  calendar_id      String            @db.Uuid
+  effective_from   DateTime          @db.Date
+  effective_to     DateTime?         @db.Date // exclusive; null = open ended
+  reason           String
+  changed_by       String            @db.Uuid
+  changed_at       DateTime          @default(now()) @db.Timestamptz(6)
+  // migration 0017: where the clock starts and ends (task/milestone/gate code, PRED, OPEN, DLP:<task>:<setting>), the SLA sheet code, the rule set version
+  start_ref        String?
+  end_ref          String?
+  code             String?
+  rule_set_id      String?           @db.Uuid
+  // migration 0052 (Q135): an inherited value waiting for the owner's SLA confirmation; left out of the scorecard and penalties
+  pending_confirmation Boolean       @default(false)
+
+  task_def  TaskDefinition @relation(fields: [task_def_id], references: [id])
+  region    Region?        @relation(fields: [region_id], references: [id])
+  calendar  WorkCalendar   @relation(fields: [calendar_id], references: [id])
+  rule_set  SlaRuleSet?    @relation(fields: [rule_set_id], references: [id])
+  instances TaskInstance[]
+
+  @@index([task_def_id, effective_from])
+  @@index([region_id])
+  @@map("sla_rules")
+}
+
+// Version of the whole SLA rule set (migration 0017, contract 0.2.6). A published version owns one sla_rules row per task and override;
+// a draft keeps its items until it is published. Written only by admin_save_sla_rule_set / admin_publish_sla_rule_set.
+model SlaRuleSet {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version             Int       @unique
+  status              String    @default("draft") // draft | published
+  effective_from      DateTime? @db.Date
+  effective_to        DateTime? @db.Date
+  base_version        Int?
+  reason              String
+  created_by          String?   @db.Uuid
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  published_by        String?   @db.Uuid
+  published_at        DateTime? @db.Timestamptz(6)
+  apply_to_open_tasks Boolean?
+  apply_pending       Boolean   @default(false)
+  affected_open_tasks Int?
+  row_version         Int       @default(1)
+
+  rules SlaRule[]
+  items SlaRuleSetItem[]
+
+  @@map("sla_rule_sets")
+}
+
+model SlaRuleSetItem {
+  set_id           String     @db.Uuid
+  task_def_id      String     @db.Uuid
+  min_working_days Int
+  max_working_days Int
+  start_ref        String
+  end_ref          String?
+  calendar_id      String     @db.Uuid
+  code             String?
+  overrides        Json       @default("[]") @db.JsonB // [{scenario, region_id, min_working_days, max_working_days}]
+  pending_confirmation Boolean @default(false) // migration 0052 (Q135)
+  set              SlaRuleSet @relation(fields: [set_id], references: [id], onDelete: Cascade)
+
+  @@id([set_id, task_def_id])
+  @@map("sla_rule_set_items")
+}
+
+// Permit types (Master Setting tblPAType). Has Expiry is a property of the type (D36, Q63); every permit record can override it (Q63c).
+model PermitType {
+  code       String  @id
+  name_ar    String?
+  kind       String // permit | access | ptw
+  has_expiry Boolean
+  sort_order Int     @default(0)
+  is_active  Boolean @default(true)
+  stream     String? // 0050 (Q90): CW or TE = the team that enters it (Matrix row permits_hse / permits_hse_te); NULL = no stream, on the Permits & HSE row
+
+  @@map("permit_types")
+}
+
+// What the calculation layer last saw of each gate on each site (migration 0018, Q81): a gate that was open and is blocked now raises an alert,
+// it does not re-lock tasks that are open. Written only by calc_gate_watch. The foreign key to sites (on delete cascade) lives in the migration.
+model SiteGateState {
+  site_id   String   @db.Uuid
+  gate_code String
+  is_open   Boolean
+  since     DateTime @default(now()) @db.Timestamptz(6)
+  status    String? // migration 0052 (Q9): the last gate_eval status and date seen
+  gate_date DateTime? @db.Date
+
+  @@id([site_id, gate_code])
+  @@map("site_gate_state")
+}
+
+// Migration 0052 (Q9): the history of every gate of a site (opened, closed, date_moved). Written only by calc_gate_watch; never rewritten.
+model SiteGateEvent {
+  id            BigInt   @id @default(autoincrement())
+  site_id       String   @db.Uuid
+  region_id     Int
+  gate_code     String
+  event         String // opened | closed | date_moved
+  status        String
+  gate_date     DateTime? @db.Date
+  previous_date DateTime? @db.Date
+  shifted       Boolean  @default(false)
+  cause         Json     @default("[]") @db.JsonB
+  at            DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([site_id, gate_code, id])
+  @@map("site_gate_events")
+}
+
+// Migration 0052 (Q15, Q3, Q2): scenario applicability of a task code per workflow version. rule: applies | na | sla_not_measured | flag.
+model ScenarioTaskRule {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflow_id String            @db.Uuid
+  task_code   String
+  scenario    DeliveryScenario?
+  rule        String
+  flag_expr   String? // cw | tower | adaption_only | powerco | hpc | rfi | te
+  reason      String
+  version     Int               @default(1)
+  is_active   Boolean           @default(true)
+  created_by  String?           @db.Uuid
+  created_at  DateTime          @default(now()) @db.Timestamptz(6)
+  retired_by  String?           @db.Uuid
+  retired_at  DateTime?         @db.Timestamptz(6)
+
+  @@map("scenario_task_rules")
+}
+
+model ScenarioRuleState {
+  id      Boolean @id @default(true)
+  version Int     @default(1)
+
+  @@map("scenario_rule_state")
+}
+
+// Migration 0052 (Q15, Q3): an approved scope exception enables on one site a task that its scenario makes N/A. Revoked, never deleted.
+model SiteScopeException {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id           String    @db.Uuid
+  region_id         Int
+  task_code         String
+  reason            String
+  change_request_id String?   @db.Uuid
+  approved_by       String    @db.Uuid
+  approved_at       DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_by        String?   @db.Uuid
+  revoked_at        DateTime? @db.Timestamptz(6)
+  revoke_reason     String?
+
+  @@map("site_scope_exceptions")
+}
+
+// Migration 0052 (Q14): the 45 columns D:AV of the Master SLA sheet and PMIS Workspace task that measures each.
+model SlaMasterColumn {
+  seq            Int     @id
+  master_column  String  @unique
+  sla_code       String  @unique
+  name_en        String
+  from_to        String
+  applies_when   String
+  task_code      String?
+  flag_condition String?
+  inherited      Boolean @default(false)
+  note           String?
+
+  @@map("sla_master_columns")
+}
+
+model BaselineVersion {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version     Int       @unique
+  label       String?
+  status      String    @default("draft") // draft, approved, superseded
+  approved_by String?   @db.Uuid
+  approved_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  entries BaselineEntry[]
+
+  @@map("baseline_versions")
+}
+
+// Baseline date per site per milestone (10 milestones).
+model BaselineEntry {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version_id     String    @db.Uuid
+  site_id        String    @db.Uuid
+  region_id      Int
+  site           Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  milestone_code String // MS1..MS10
+  baseline_date  DateTime? @db.Date
+  planned_start  DateTime? @db.Date
+
+  version BaselineVersion @relation(fields: [version_id], references: [id])
+
+  @@unique([version_id, site_id, milestone_code])
+  @@index([site_id])
+  @@index([region_id])
+  @@map("baseline_entries")
+}
+
+// Min/max working-day gap between consecutive milestones (Baseline sheet Link/From/To/Min/Max).
+// Phase gate between two milestones (by stable code). Conditions and SLA are light-editable on a published version.
+model PhaseGateRule {
+  id                   String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflow_id          String  @db.Uuid
+  link_code            String // G2..G10 in v1; stable (gate Gn sits between MS(n-1) and MSn)
+  seq                  Int
+  name_en              String
+  name_ar              String?
+  from_code            String // stage code
+  to_code              String // stage code
+  conditions           Json? // which tasks, permits or dates the gate waits for
+  min_wd               Int // gate SLA
+  max_wd               Int
+  master_export_column String?
+  is_active            Boolean @default(true)
+
+  workflow WorkflowDefinition @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
+  custom   Json               @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@unique([workflow_id, link_code])
+  @@index([custom], type: Gin)
+  @@map("phase_gate_rules")
+}
+
+// Change Control register: scope/date changes plus Suspension -> Resumption pairs that shift gates.
+model ChangeRequest {
+  id                 String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  change_code        String       @unique // Master "Change ID"
+  site_id            String?      @db.Uuid
+  region_id          Int?
+  is_global          Boolean      @default(false) // explicit global row; NULL region alone never means global
+  site               Site?        @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade, onDelete: Restrict)
+  kind               ChangeKind
+  scope_item         String?
+  old_value          String?
+  new_value          String?
+  reason             String?
+  request_date       DateTime?    @db.Date
+  status             ChangeStatus @default(requested)
+  approved_by        String?      @db.Uuid
+  approval_date      DateTime?    @db.Date
+  ticket_id          String?
+  requested_by       String       @db.Uuid
+  // Suspension / resumption
+  suspension_start   DateTime?    @db.Date
+  resumption_date    DateTime?    @db.Date
+  paired_change_id   String?      @db.Uuid
+  shift_working_days Int? // computed on resumption, applied to gates
+  custom             Json         @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([site_id, kind])
+  @@index([region_id, status])
+  @@index([custom], type: Gin)
+  @@map("change_requests")
+}
+
+// ============================================================================
+// 7b. WEIGHT SETS AND PROGRESS SNAPSHOTS (editable Project Status, health index, delay attribution)
+// ============================================================================
+
+// Versioned. A published set is immutable (children frozen by trigger) and its effective range cannot overlap another
+// published set of the same code. The 100% rule (activities in a set, items in an activity) is enforced at commit by a
+// deferred constraint trigger for published sets (db/sql/005_weights.sql).
+model WeightSet {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code           WeightSetCode
+  version        Int
+  effective_from DateTime        @db.Date
+  effective_to   DateTime?       @db.Date // exclusive
+  status         WeightSetStatus @default(draft)
+  reason         String
+  changed_by     String          @db.Uuid
+  created_at     DateTime        @default(now()) @db.Timestamptz(6)
+  published_at   DateTime?       @db.Timestamptz(6)
+
+  activities WeightActivity[]
+  snapshots  ProgressSnapshot[]
+
+  @@unique([code, version])
+  @@index([code, status, effective_from])
+  @@map("weight_sets")
+}
+
+// Activity (Project Status), factor (health index) or cause (delay attribution).
+model WeightActivity {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  weight_set_id String  @db.Uuid
+  code          String
+  name          String
+  name_ar       String?
+  weight        Decimal @db.Decimal(7, 3) // percent; set total = 100
+  sort          Int     @default(0)
+
+  weight_set WeightSet    @relation(fields: [weight_set_id], references: [id], onDelete: Cascade)
+  items      WeightItem[]
+
+  @@unique([weight_set_id, code])
+  @@map("weight_activities")
+}
+
+model WeightItem {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  activity_id  String  @db.Uuid
+  code         String // e.g. 1.1
+  name         String
+  name_ar      String?
+  weight       Decimal @db.Decimal(7, 3) // percent inside the activity; activity total = 100 (0 allowed = not weighted)
+  unit         String? // units, 0/100, one unit per item, ...
+  measure_rule Json? // method and source columns (done, applicable, plan basis)
+  source       String?
+  sort         Int     @default(0)
+
+  activity WeightActivity @relation(fields: [activity_id], references: [id], onDelete: Cascade)
+
+  @@unique([activity_id, code])
+  @@map("weight_items")
+}
+
+// Weekly snapshot per scope (project-wide = is_global, or one region). Keeps the values computed at the time.
+model ProgressSnapshot {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  snapshot_date DateTime @db.Date
+  weight_set_id String   @db.Uuid
+  region_id     Int?
+  is_global     Boolean  @default(false)
+  actual_pct    Decimal  @db.Decimal(6, 3)
+  planned_pct   Decimal? @db.Decimal(6, 3)
+  spi           Decimal? @db.Decimal(6, 3)
+  plan_coverage Decimal? @db.Decimal(6, 3)
+  health_index  Decimal? @db.Decimal(6, 3)
+  values        Json // per activity and item values, factor values, site counts
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  weight_set WeightSet @relation(fields: [weight_set_id], references: [id])
+  region     Region?   @relation(fields: [region_id], references: [id])
+
+  @@index([snapshot_date, weight_set_id])
+  @@index([region_id, snapshot_date])
+  @@map("progress_snapshots")
+}
+
+// Weekly snapshot per site (migration 0039): the facts the dashboard needs to show a past reference date as it was saved. Written only by
+// dash_snapshot_take; never updated (trigger). The foreign keys to sites, regions and weight_sets live in the migration.
+model SiteSnapshot {
+  snapshot_date  DateTime @db.Date
+  site_id        String   @db.Uuid
+  region_id      Int
+  cluster_code   String?
+  scenario       String?
+  weight_set_id  String?  @db.Uuid
+  overall_status String
+  ms             Json // {"MS1": {"state", "date", "baseline", "seq", "stream", "gate_open", "blocked"}, ...}
+  streams        Json // {"CW": "in_progress", ...}
+  items          Json // Project Status counts per item: [done, applicable, planned, plan_known]
+  progress_pct   Decimal? @db.Decimal(6, 3)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([snapshot_date, site_id])
+  @@index([region_id, snapshot_date])
+  @@index([site_id, snapshot_date])
+  @@map("site_snapshots")
+}
+
+// ============================================================================
+// 7c. CUSTOM FIELDS AND PERMISSION GRID (System Admin configuration)
+// ============================================================================
+
+// Admin-defined field on a register, sites or tasks. Values live in the entity's `custom` JSONB column keyed by code and are
+// validated by trigger (db/sql/006). Fields are deactivated, never deleted once they hold values.
+model FieldDefinition {
+  id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entity_type          FieldEntityType
+  task_code            String? // only for entity_type = task_instance: field of one task type (by stable task code)
+  code                 String
+  label_en             String
+  label_ar             String?
+  data_type            FieldDataType
+  required             Boolean         @default(false)
+  validation           Json? // {"min":..,"max":..,"min_length":..,"max_length":..,"pattern":".."}
+  default_value        Json?
+  section              String?
+  sort_order           Int             @default(0)
+  in_templates         Boolean         @default(false)
+  in_exports           Boolean         @default(false)
+  master_export_column String? // column letter/name in the Master-format export
+  in_list_filters      Boolean         @default(false)
+  is_active            Boolean         @default(true)
+  version              Int             @default(1)
+  effective_from       DateTime        @default(now()) @db.Date
+  reason               String?
+  changed_by           String?         @db.Uuid
+  changed_at           DateTime        @default(now()) @db.Timestamptz(6)
+
+  list_values FieldListValue[]
+  permissions FieldPermission[]
+
+  @@unique([entity_type, code])
+  @@index([entity_type, is_active])
+  @@map("field_definitions")
+}
+
+model FieldListValue {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  field_id   String  @db.Uuid
+  code       String
+  label_en   String
+  label_ar   String?
+  sort_order Int     @default(0)
+  is_active  Boolean @default(true)
+
+  field FieldDefinition @relation(fields: [field_id], references: [id])
+
+  @@unique([field_id, code])
+  @@map("field_list_values")
+}
+
+// Field x role or permission profile -> hidden / read / edit. No rule = follows the entity-level permission.
+// Several rules for one user: the most permissive wins (union).
+model FieldPermission {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  field_id   String      @db.Uuid
+  role_id    String?     @db.Uuid
+  profile_id String?     @db.Uuid
+  access     FieldAccess
+
+  field   FieldDefinition    @relation(fields: [field_id], references: [id])
+  role    Role?              @relation(fields: [role_id], references: [id])
+  profile PermissionProfile? @relation(fields: [profile_id], references: [id])
+
+  @@index([field_id])
+  @@index([role_id])
+  @@index([profile_id])
+  @@map("field_permissions")
+}
+
+// Per entity type counter bumped by trigger on any field or list change. Template versions record the value they were built at.
+model FieldSetVersion {
+  entity_type FieldEntityType @id
+  version     Int             @default(1)
+  updated_at  DateTime        @default(now()) @db.Timestamptz(6)
+
+  @@map("field_set_versions")
+}
+
+model PermissionProfile {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String   @unique
+  name_en     String
+  name_ar     String?
+  description String?
+  is_active   Boolean  @default(true)
+  version     Int      @default(1)
+  reason      String?
+  changed_by  String?  @db.Uuid
+  changed_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  grants      PermissionGrant[]
+  assignments UserRoleAssignmentProfile[]
+  field_perms FieldPermission[]
+  Role        Role[]
+
+  @@map("permission_profiles")
+}
+
+// Grid cell: profile x module/screen x action. Presence = allowed. module_key is a module ("sites") or screen ("sites.tasks").
+model PermissionGrant {
+  profile_id String           @db.Uuid
+  module_key String
+  action     PermissionAction
+
+  profile PermissionProfile @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+
+  @@id([profile_id, module_key, action])
+  @@index([module_key])
+  @@map("permission_grants")
+}
+
+// Profiles applied to assignments (many-to-many). Part of the assignment family (admin-only through the API, no RLS).
+model UserRoleAssignmentProfile {
+  assignment_id String @db.Uuid
+  profile_id    String @db.Uuid
+
+  assignment UserRoleAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+  profile    PermissionProfile  @relation(fields: [profile_id], references: [id])
+
+  @@id([assignment_id, profile_id])
+  @@index([profile_id])
+  @@map("user_role_assignment_profiles")
+}
+
+// ============================================================================
+// 8. REGISTERS (lean; each is its own module)
+// ============================================================================
+
+model RfDesignRecord {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id                   String    @unique @db.Uuid
+  region_id                 Int
+  site                      Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  nominal_plan_issue_date   DateTime? @db.Date
+  nominal_lat               Decimal?  @db.Decimal(9, 6)
+  nominal_lon               Decimal?  @db.Decimal(9, 6)
+  search_ring_radius_m      Int?
+  search_ring_received_date DateTime? @db.Date
+  deviation_from_nominal_m  Decimal?  @db.Decimal(9, 1)
+  antenna_height_m          Decimal?  @db.Decimal(6, 1)
+  sectors                   Int?
+  azimuths                  String?
+  tilt                      String?
+  tss_plan_date             DateTime? @db.Date
+  custom                    Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([region_id])
+  @@index([custom], type: Gin)
+  @@map("rf_design_records")
+}
+
+model AcquisitionCandidate {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id               String    @db.Uuid
+  region_id             Int
+  site                  Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  candidate_no          String
+  latitude              Decimal?  @db.Decimal(9, 6)
+  longitude             Decimal?  @db.Decimal(9, 6)
+  address               String?
+  distance_to_nominal_m Decimal?  @db.Decimal(9, 1)
+  within_search_ring    Boolean?
+  submitted_date        DateTime? @db.Date
+  mw_los_check          String?
+  test_pit_result       String?
+  tss_date              DateTime? @db.Date
+  selected              Boolean   @default(false)
+  selection_date        DateTime? @db.Date
+  owner_name            String?
+  ownership_type        String?
+  contact_person        String?
+  phone                 String?
+  email                 String?
+  negotiation_start     DateTime? @db.Date
+  contract_no           String?
+  contract_signoff_date DateTime? @db.Date
+  lease_expiry_date     DateTime? @db.Date
+  title_verified        Boolean?
+  custom                Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@unique([site_id, candidate_no])
+  @@index([region_id])
+  @@index([custom], type: Gin)
+  @@map("acquisition_candidates")
+}
+
+model ProcurementRecord {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id      String    @db.Uuid
+  region_id    Int
+  site         Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  scope        String // CW or TE
+  delivery     String? // outsourced / internal
+  pr_no        String?
+  pr_date      DateTime? @db.Date
+  po_wo_no     String?
+  po_wo_date   DateTime? @db.Date
+  party_id     String?   @db.Uuid
+  team_id      String?   @db.Uuid
+  order_status String?
+  remark       String?
+  custom       Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+  register_record_id String? @db.Uuid // 0019: the approved version that produced this row
+  record_version     Int?
+  hpc_approval_date  DateTime? @db.Date // 0042: scope HPC only, closes C3
+
+  @@index([site_id])
+  @@index([region_id, order_status])
+  @@index([custom], type: Gin)
+  @@map("procurement_records")
+}
+
+model PowercoRecord {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id                 String    @unique @db.Uuid
+  region_id               Int
+  site                    Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  pr_no                   String?
+  contractor              String?
+  survey_date             DateTime? @db.Date
+  layout_received         DateTime? @db.Date
+  layout_approved         DateTime? @db.Date
+  notice_date             DateTime? @db.Date
+  mos_date                DateTime? @db.Date
+  installation_finish     DateTime? @db.Date
+  ota_acceptance_date     DateTime? @db.Date
+  docs_approval_date      DateTime? @db.Date
+  meter_no                String?
+  power_on_date           DateTime? @db.Date
+  billing_conversion_date DateTime? @db.Date
+  status                  String?
+  remark                  String?
+  custom                  Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+  request_date            DateTime? @db.Date // Q56: the POWERCO request is entered in the POWERCO register
+  register_record_id      String?   @db.Uuid // 0019
+  record_version          Int?
+
+  @@index([region_id, status])
+  @@index([custom], type: Gin)
+  @@map("powerco_records")
+}
+
+model HpcRecord {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id             String    @unique @db.Uuid
+  region_id           Int
+  site                Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  request_no          String? // legacy since 0042: the HPC request is a Procurement record of scope HPC
+  request_date        DateTime? @db.Date // legacy since 0042
+  fiber_uplink        String?
+  fiber_status        String?
+  internal_fiber_team String?
+  installation_date   DateTime? @db.Date
+  tx_link_tested_date DateTime? @db.Date
+  status              String?
+  remark              String?
+  custom              Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+  register_record_id  String?   @db.Uuid // 0019
+  record_version      Int?
+  link_received_date  DateTime? @db.Date // 0042: handover from HPC
+  in_service_date     DateTime? @db.Date // 0042: operation, closes C4
+  procurement_record_id String? @db.Uuid // 0042: the approved scope-HPC Procurement version
+
+  @@index([region_id, status])
+  @@index([custom], type: Gin)
+  @@map("hpc_records")
+}
+
+model PermitRecord {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id          String    @db.Uuid
+  region_id        Int
+  site             Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  permit_type      String
+  applied_date     DateTime? @db.Date
+  status           String?
+  valid_from       DateTime? @db.Date
+  valid_to         DateTime? @db.Date
+  has_expiry       Boolean? // Q63c: yes = valid_to required once approved; no = permanent. Defaults from the permit type (trigger).
+  na_reason        String?
+  na_approved_by   String?
+  hse_checks       Json? // JSA/TRA, toolbox talk, work at height, lifting, LOTO, rescue
+  stop_work        Boolean   @default(false)
+  stop_lifted_date DateTime? @db.Date
+  remark           String?
+  custom           Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+  register_record_id String? @db.Uuid // 0019
+  record_version     Int?
+
+  @@index([site_id])
+  @@index([region_id, status])
+  @@index([valid_to])
+  @@index([custom], type: Gin)
+  @@map("permit_records")
+}
+
+model WarehouseItem {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_code  String            @unique
+  item_group String // WL, MW, IP, PWR, CW ...
+  name       String
+  unit       String?
+  serialised Boolean           @default(false)
+  serials    WarehouseSerial[]
+
+  custom Json @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([custom], type: Gin)
+  @@map("warehouse_items")
+}
+
+model WarehouseSerial {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_id          String        @db.Uuid
+  serial_no        String        @unique
+  pl_invoice_no    String?
+  box_no           String?
+  dn_no            String?
+  rn_no            String?
+  site_id          String?       @db.Uuid
+  region_id        Int?
+  is_global        Boolean       @default(false) // explicit global row; NULL region alone never means global
+  site             Site?         @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade, onDelete: Restrict)
+  dispatch_date    DateTime?     @db.Date
+  return_condition String?
+  status           String?
+  installed        Boolean       @default(false)
+  item             WarehouseItem @relation(fields: [item_id], references: [id])
+  custom           Json          @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([site_id])
+  @@index([region_id, status])
+  @@index([custom], type: Gin)
+  @@map("warehouse_serials")
+}
+
+model WarehouseSiteQty {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id    String  @db.Uuid
+  region_id  Int
+  site       Site    @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  item_id    String  @db.Uuid
+  required   Decimal @default(0) @db.Decimal(12, 2)
+  dispatched Decimal @default(0) @db.Decimal(12, 2)
+  installed  Decimal @default(0) @db.Decimal(12, 2)
+
+  @@unique([site_id, item_id])
+  @@index([region_id])
+  @@map("warehouse_site_qty")
+}
+
+model QualityInspection {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  record_code        String    @unique
+  record_type        String
+  site_id            String    @db.Uuid
+  region_id          Int
+  site               Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  stage              String?
+  activity           String?
+  point_type         String?
+  description        String?
+  severity           String?
+  team               String?
+  party_id           String?   @db.Uuid
+  raised_date        DateTime? @db.Date
+  target_date        DateTime? @db.Date
+  result             String?
+  closed_date        DateTime? @db.Date
+  released_by        String?
+  root_cause         String?
+  linked_record_code String?
+  na_reason          String?
+  status             String?
+  blocking           Boolean   @default(false)
+  snag_id            String?   @db.Uuid
+  custom             Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([site_id])
+  @@index([region_id, status])
+  @@index([custom], type: Gin)
+  @@map("quality_inspections")
+}
+
+model Issue {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id     String         @db.Uuid
+  region_id   Int
+  site        Site           @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  title       String
+  detail      String?
+  owner_id    String?        @db.Uuid
+  owner_text  String?
+  party_id    String?        @db.Uuid
+  raised_date DateTime       @db.Date
+  due_date    DateTime?      @db.Date
+  status      RegisterStatus @default(open)
+  closed_date DateTime?      @db.Date
+  delay_days  Int?
+  custom      Json           @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([site_id, status])
+  @@index([region_id, status])
+  @@index([custom], type: Gin)
+  @@map("issues")
+}
+
+model Risk {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  risk_code      String         @unique
+  statement      String
+  category       String?
+  scope          String?
+  affected_sites Int?
+  probability    Int
+  impact         Int
+  response       String?
+  mitigation     String?
+  risk_owner     String?
+  action_owner   String?
+  target_date    DateTime?      @db.Date
+  status         RegisterStatus @default(open)
+  trend          String?
+  last_review    DateTime?      @db.Date
+  next_review    DateTime?      @db.Date
+  region_id      Int?
+  is_global      Boolean        @default(false) // explicit global row; NULL region alone never means global
+  custom         Json           @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([status])
+  @@index([custom], type: Gin)
+  @@map("risks")
+}
+
+model ReadinessHandover {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id                  String    @unique @db.Uuid
+  region_id                Int
+  site                     Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  commissioning_power_safe Boolean?
+  uplink_ready_date        DateTime? @db.Date
+  om_checklist             String?
+  na_reason                String?
+  om_accepted_by           String?
+  om_acceptance_date       DateTime? @db.Date
+  site_access_keys_handed  Boolean?
+  hoto_package_date        DateTime? @db.Date
+  legacy_handover_date     DateTime? @db.Date
+  obligations_closure_date DateTime? @db.Date
+  closure_approved_by      String?
+  closure_approval_date    DateTime? @db.Date
+  closure_ready            Boolean   @default(false)
+  custom                   Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([region_id])
+  @@index([custom], type: Gin)
+  @@map("readiness_handover")
+}
+
+model AsBuiltRecord {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id        String    @unique @db.Uuid
+  region_id      Int
+  site           Site      @relation(fields: [site_id, region_id], references: [id, region_id], onUpdate: Cascade)
+  submitted_date DateTime? @db.Date
+  quantities     Json // item -> quantity (tower m, cables, trays, rods ...)
+  custom         Json      @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([region_id])
+  @@index([custom], type: Gin)
+  @@map("as_built_records")
+}
+
+model Meeting {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title        String
+  meeting_date DateTime        @db.Timestamptz(6)
+  region_id    Int?
+  is_global    Boolean         @default(false) // explicit global row; NULL region alone never means global
+  attendees    Json?
+  minutes      String?
+  actions      MeetingAction[]
+  custom       Json            @default("{}") @db.JsonB // admin-defined fields, validated by trigger
+
+  @@index([meeting_date])
+  @@index([custom], type: Gin)
+  @@map("meetings")
+}
+
+model MeetingAction {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  meeting_id  String         @db.Uuid
+  description String
+  owner_id    String?        @db.Uuid
+  due_date    DateTime?      @db.Date
+  status      RegisterStatus @default(open)
+  site_id     String?        @db.Uuid
+  meeting     Meeting        @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+
+  @@index([meeting_id])
+  @@map("meeting_actions")
+}
+
+// ============================================================================
+// 9. LOGS AND SETTINGS
+// ============================================================================
+
+// Append-only. Enforced by triggers in db/sql/001_audit_append_only.sql plus REVOKE UPDATE, DELETE.
+model AuditLog {
+  id                BigInt   @id @default(autoincrement())
+  at                DateTime @default(now()) @db.Timestamptz(6)
+  actor_id          String?  @db.Uuid
+  on_behalf_of      String?  @db.Uuid
+  action            String // create, update, delete, approve, reject, download, login, override ...
+  entity_type       String
+  entity_id         String?
+  site_id           String?  @db.Uuid
+  region_id         Int?
+  before            Json?
+  after             Json?
+  reason            String?
+  is_admin_override Boolean  @default(false)
+  ip                String?
+  user_agent        String?
+  request_id        String?
+  // Migration 0045: filled by the BEFORE INSERT trigger audit_log_fill from the app.* settings of the request when the row leaves them null.
+  module_key        String?
+  session_id        String?  @db.Uuid
+  auth_method       String? // local, oidc, break_glass
+  mfa               Boolean?
+  stepup_verified   Boolean?
+  via               String? // manual, template, bulk, api, job
+  batch_id          String?  @db.Uuid
+  batch_row         String?  @db.Uuid
+  device            Json? // { browser, os, type }
+  job_name          String?
+
+  @@index([entity_type, entity_id])
+  @@index([actor_id, at])
+  @@index([site_id, at])
+  @@index([at])
+  @@map("audit_log")
+}
+
+// Migration 0045: one row per changed field of an audit row (AFTER INSERT trigger on audit_log). Append-only; pmis_app reads it only
+// through log_field_changes_read (decision B4 scope).
+model AuditFieldChange {
+  id             BigInt   @id @default(autoincrement())
+  audit_id       BigInt
+  at             DateTime @db.Timestamptz(6)
+  actor_id       String?  @db.Uuid
+  on_behalf_of   String?  @db.Uuid
+  action         String
+  entity_type    String
+  entity_id      String? // the logical record (register records: entity_id of the record)
+  record_id      String? // the entity_id of the audit row (register records: the version)
+  site_id        String?  @db.Uuid
+  region_id      Int?
+  module_key     String?
+  field          String
+  field_label_en String?
+  field_label_ar String?
+  old_value      Json?
+  new_value      Json?
+  ip             String?
+  user_agent     String?
+  device         Json?
+  session_id     String?  @db.Uuid
+  via            String?
+  batch_id       String?  @db.Uuid
+  request_id     String?
+
+  @@map("audit_field_changes")
+}
+
+// Migration 0045: sign-in and security log, append-only hash chain (security_log_chain). Written only by sec_log_write and the identity triggers.
+model SecurityLog {
+  id              BigInt   @id @default(autoincrement())
+  at              DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  event           String
+  outcome         String
+  user_id         String?  @db.Uuid
+  actor_id        String?  @db.Uuid
+  identifier_hash String? // masked keyed HMAC ?x***#<12 hex>, never the typed text
+  client_type     String   @default("web")
+  ip              String?
+  user_agent      String?
+  device          Json?
+  session_id      String?  @db.Uuid
+  request_id      String?
+  detail          Json?
+
+  @@map("security_log")
+}
+
+// Migration 0045: job run log and deployment log.
+model JobRun {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  started_at  DateTime  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  finished_at DateTime? @db.Timestamptz(6)
+  outcome     String    @default("running")
+  rows        BigInt?
+  error       String?
+  detail      Json?
+  host        String?
+
+  @@map("job_runs")
+}
+
+model Deployment {
+  id          BigInt   @id @default(autoincrement())
+  deployed_at DateTime @default(now()) @db.Timestamptz(6)
+  version     String
+  git_sha     String?
+  migrations  String[] @default([])
+  deployed_by String?
+  host        String?
+  detail      Json?
+
+  @@map("deployments")
+}
+
+// Migration 0045: security alerts (rules evaluated by sec_alerts_evaluate); status changes only through sec_alert_ack.
+model SecurityAlert {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at      DateTime  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  rule            String
+  severity        String
+  status          String    @default("open")
+  title           String
+  detail          Json?
+  dedup_key       String    @unique
+  user_id         String?   @db.Uuid
+  ip              String?
+  acknowledged_at DateTime? @db.Timestamptz(6)
+  acknowledged_by String?   @db.Uuid
+  ack_note        String?
+
+  @@map("security_alerts")
+}
+
+// Separate from the audit log; purged after 12 months by a scheduled job.
+model SystemLog {
+  id         BigInt   @id @default(autoincrement())
+  at         DateTime @default(now()) @db.Timestamptz(6)
+  level      LogLevel
+  source     String // api, importer, template-check, job
+  message    String
+  context    Json?
+  user_id    String?  @db.Uuid
+  request_id String?
+
+  @@index([at])
+  @@index([level, at])
+  @@index([source, at])
+  @@map("system_log")
+}
+
+model Setting {
+  key         String   @id // require_mfa, geofence_radius_m, sla.default_levels ...
+  value       Json
+  description String?
+  updated_by  String?  @db.Uuid
+  updated_at  DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("settings")
+}
+
+// Departments, messages and announcements (migration 0011, ADR 0013). pmis_app only reads these tables (row-level
+// security); writes go through idm_department_save / idm_set_user_org, msg_* and ann_* functions.
+model Department {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String   @unique
+  name_en    String
+  name_ar    String?
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  users User[]
+
+  @@map("departments")
+}
+
+model MessageThread {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subject         String
+  created_by      String   @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  last_message_at DateTime @default(now()) @db.Timestamptz(6)
+
+  creator      User                 @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  participants MessageParticipant[]
+  messages     Message[]
+
+  @@map("message_threads")
+}
+
+model MessageParticipant {
+  thread_id    String    @db.Uuid
+  user_id      String    @db.Uuid
+  last_read_at DateTime? @db.Timestamptz(6)
+
+  thread MessageThread @relation(fields: [thread_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user   User          @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([thread_id, user_id])
+  @@index([user_id], map: "message_participants_user_idx")
+  @@map("message_participants")
+}
+
+// Append-only (trigger). The original message has is_original = true; replies are shown newest first under it.
+model Message {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  thread_id   String   @db.Uuid
+  author_id   String   @db.Uuid
+  body        String
+  is_original Boolean  @default(false)
+  created_at  DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  thread MessageThread @relation(fields: [thread_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  author User          @relation(fields: [author_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([thread_id, created_at], map: "messages_thread_idx")
+  @@map("messages")
+}
+
+model Announcement {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title        String
+  body         String
+  audience_all Boolean  @default(false)
+  created_by   String   @db.Uuid
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  creator    User                    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  targets    AnnouncementTarget[]
+  recipients AnnouncementRecipient[]
+
+  @@map("announcements")
+}
+
+model AnnouncementTarget {
+  announcement_id String @db.Uuid
+  kind            String // user, group, role, department
+  target_id       String @db.Uuid
+
+  announcement Announcement @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([announcement_id, kind, target_id])
+  @@map("announcement_targets")
+}
+
+// Fixed when the announcement is sent.
+model AnnouncementRecipient {
+  announcement_id String @db.Uuid
+  user_id         String @db.Uuid
+
+  announcement Announcement          @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user         User                  @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  response     AnnouncementResponse?
+
+  @@id([announcement_id, user_id])
+  @@index([user_id], map: "announcement_recipients_user_idx")
+  @@map("announcement_recipients")
+}
+
+// Append-only (trigger). A disagreement needs a note of at least 3 characters (check constraint).
+model AnnouncementResponse {
+  announcement_id String   @db.Uuid
+  user_id         String   @db.Uuid
+  decision        String // agree, disagree
+  note            String?
+  responded_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  recipient AnnouncementRecipient @relation(fields: [announcement_id, user_id], references: [announcement_id, user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([announcement_id, user_id])
+  @@map("announcement_responses")
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Register framework (migration 0019). Written only through the reg_* functions; scalar foreign keys, no back-relations.
+// ---------------------------------------------------------------------------------------------------------------------
+model RegisterDefinition {
+  register_key      String   @id
+  name_en           String
+  name_ar           String?
+  module_key        String
+  kind              String   @default("register")
+  site_scoped       Boolean  @default(true)
+  multiple_per_site Boolean  @default(true)
+  record_types      String[]
+  approval_levels   Int      @default(3) // the level count of the register's Matrix row (1..3)
+  rules             Json     @default("{}") @db.JsonB
+  enabled           Boolean  @default(false)
+  sort_order        Int      @default(0)
+  is_active         Boolean  @default(true)
+
+  @@map("register_definitions")
+}
+
+model RegisterField {
+  register_key String
+  code         String
+  label_en     String
+  label_ar     String?
+  field_type   String
+  required     Boolean @default(false)
+  is_actual    Boolean @default(false)
+  derived      Boolean @default(false)
+  options      Json?   @db.JsonB
+  in_list      Boolean @default(false)
+  section      String?
+  sort_order   Int     @default(0)
+  is_active    Boolean @default(true)
+  list_catalogue String? // 0057 (Q104): the list catalogue of a list or list_code field
+
+  @@id([register_key, code])
+  @@map("register_fields")
+}
+
+// 0057 (P5, Q104): every list of a register is data. Written only through admin_save_list_catalogue / admin_save_list_value.
+model ListCatalogue {
+  code        String   @id
+  name_en     String
+  name_ar     String?
+  description String?
+  critical    Boolean  @default(false)
+  status      String   @default("pending") // pending | confirmed
+  allow_other Boolean  @default(false)
+  is_active   Boolean  @default(true)
+  version     Int      @default(1)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_by  String?  @db.Uuid
+
+  @@map("list_catalogues")
+}
+
+model ListValue {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  catalogue_code String
+  code           String // stable: the value stored in the records
+  label_en       String
+  label_ar       String?
+  aliases        String[] @default([])
+  groups         String[] @default([])
+  sort_order     Int      @default(0)
+  is_active      Boolean  @default(true)
+  version        Int      @default(1)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_by     String?  @db.Uuid
+
+  @@unique([catalogue_code, code])
+  @@map("list_values")
+}
+
+model RegisterTaskSource {
+  register_key String
+  task_code    String
+  date_field   String
+  data_eq      Json    @default("{}") @db.JsonB
+  data_in      Json    @default("{}") @db.JsonB
+  sort_order   Int     @default(0)
+  is_active    Boolean @default(true)
+
+  @@id([register_key, task_code])
+  @@map("register_task_sources")
+}
+
+model RegisterRecord {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entity_id             String    @db.Uuid
+  version_no            Int       @default(1)
+  supersedes_id         String?   @db.Uuid
+  is_current            Boolean   @default(false)
+  register_key          String
+  record_type           String?
+  site_id               String?   @db.Uuid
+  region_id             Int?
+  is_global             Boolean   @default(false)
+  state                 String    @default("entry")
+  current_level         Int       @default(1)
+  levels_required       Int       @default(3)
+  path_frozen_at        DateTime? @db.Timestamptz(6)
+  level_round           Int       @default(0)
+  level_opened_at       DateTime? @db.Timestamptz(6)
+  ball_in_court_user_id String?   @db.Uuid
+  return_count          Int       @default(0)
+  last_return_note      String?
+  self_approval         Boolean   @default(false)
+  task_id               String?   @db.Uuid
+  data                  Json      @default("{}") @db.JsonB
+  custom                Json      @default("{}") @db.JsonB
+  external_party_id     String?   @db.Uuid
+  source                String    @default("manual")
+  batch_row_id          String?   @db.Uuid
+  version               Int       @default(1)
+  created_by            String?   @db.Uuid
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+  submitted_at          DateTime? @db.Timestamptz(6)
+  approved_at           DateTime? @db.Timestamptz(6)
+  approved_by           String?   @db.Uuid
+  voided_at             DateTime? @db.Timestamptz(6)
+  voided_by             String?   @db.Uuid
+  void_reason           String?
+
+  @@unique([entity_id, version_no], map: "register_records_version_key")
+  @@index([register_key, site_id])
+  @@map("register_records")
+}
+
+model RegisterStep {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  record_id       String   @db.Uuid
+  level           Int
+  action          String
+  acted_by        String?  @db.Uuid
+  note            String?
+  before_state    String?
+  after_state     String?
+  stepup_verified Boolean  @default(false)
+  self_approval   Boolean  @default(false)
+  batch_row_id    String?  @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([record_id, created_at])
+  @@map("register_steps")
+}
+
+model RegisterLevelActor {
+  record_id String   @db.Uuid
+  level     Int
+  user_id   String   @db.Uuid
+  how       String
+  acted_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([record_id, level])
+  @@map("register_level_actors")
+}
+
+model RegisterLevelVoter {
+  record_id String    @db.Uuid
+  level     Int
+  round     Int
+  user_id   String    @db.Uuid
+  voted_at  DateTime? @db.Timestamptz(6)
+
+  @@id([record_id, level, round, user_id])
+  @@map("register_level_voters")
+}
+
+// X2 (migration 0031): follow a site or a register record. Written only by x_follow / x_unfollow.
+model Watch {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String   @db.Uuid
+  entity_type  String // site | register_record
+  entity_id    String   @db.Uuid // the site id, or register_records.entity_id
+  site_id      String?  @db.Uuid
+  register_key String?
+  region_id    Int?
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([user_id, entity_type, entity_id], map: "watches_unique")
+  @@index([entity_type, entity_id])
+  @@map("watches")
+}
+
+// X7 (migration 0031): weekly status update per region or team. Written only by x_status_post / x_status_edit; never removed.
+model StatusUpdate {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope      String // region | team
+  region_id  Int?
+  team       String? // cw | te
+  week_start DateTime @db.Date // the Sunday that opens the working week
+  health     String // on_track | at_risk | off_track
+  summary    String
+  author_id  String   @db.Uuid
+  version    Int      @default(1)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([week_start(sort: Desc), region_id, team])
+  @@map("status_updates")
+}
+
+/// 0074: the background run of the send or the approval of a big New sites batch (status processing, chunks of 25 rows). Written only by the
+/// imp_async_* functions (owner pmis_definer); pmis_app has no right on it and reads the progress through imp_batch_job_json.
+model ImportBatchJob {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id        String    @db.Uuid
+  kind            String // submit | decide
+  action          String? // approve (0074); approve | review | reject (0076)
+  scope           String?
+  items           Json?
+  note            String?
+  actor_id        String    @db.Uuid
+  stepup_verified Boolean
+  stepup_until    DateTime? @db.Timestamptz(6)
+  session_id      String?   @db.Uuid
+  auth_method     String?
+  mfa             Boolean?
+  request_id      String?
+  prev_status     String
+  state           String    @default("running") // running | done | failed
+  rows_total      Int
+  rows_done       Int       @default(0)
+  pos             Int       @default(0)
+  n_submitted     Int       @default(0)
+  n_decided       Int       @default(0)
+  n_approved      Int       @default(0)
+  n_rejected      Int       @default(0)
+  n_failed        Int       @default(0)
+  n_held          Int       @default(0) // 0076: rows held at a send or left by an approve-all
+  n_saved         Int       @default(0) // 0076: rows saved by a Save Draft send
+  failed          Json      @default("[]")
+  chunks          Int       @default(0)
+  error           String?
+  created_at      DateTime  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  heartbeat_at    DateTime  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  finished_at     DateTime? @db.Timestamptz(6)
+
+  @@index([batch_id, created_at(sort: Desc)], map: "import_batch_jobs_batch")
+  @@map("import_batch_jobs")
+}
+
+/// 0070 (G1, Q460): a proposed site (manual entry, or one row of a New sites file). It becomes a site only when L2 approves (site_create_apply).
+/// Written only by the site_draft_* and imp_*_site_batch functions; pmis_app reads it through row level security.
+model SiteDraft {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_code        String
+  region_id        Int
+  data             Json
+  status           String    @default("entry") // entry, in_approval, approved, rejected, discarded
+  version          Int       @default(1)
+  created_by       String    @db.Uuid
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+  submitted_by     String?   @db.Uuid
+  submitted_at     DateTime? @db.Timestamptz(6)
+  decided_by       String?   @db.Uuid
+  decided_at       DateTime? @db.Timestamptz(6)
+  decision_note    String?
+  return_count     Int       @default(0)
+  last_return_note String?
+  self_approval    Boolean   @default(false)
+  site_id          String?   @db.Uuid
+  batch_id         String?   @db.Uuid
+  batch_row_id     String?   @db.Uuid
+
+  @@index([status, region_id, created_at(sort: Desc)], map: "site_drafts_status_region_idx")
+  @@map("site_drafts")
+}
+
+// Migration 0076 (Car Dispatcher): one vehicle is never reserved for overlapping dates. The EXCLUDE constraint
+// vehicle_reservations_no_overlap (btree_gist: vehicle_entity_id WITH =, period WITH &&, WHERE state = 'reserved') is in the migration; written only by the
+// definer functions (trigger fa_rules) when a booking is approved.
+model VehicleReservation {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicle_entity_id String    @db.Uuid // register_records.entity_id of the vehicle
+  booking_entity_id String    @db.Uuid // register_records.entity_id of the booking
+  booking_record_id String    @db.Uuid // the approved booking version that wrote it
+  period            Unsupported("daterange") // [from, to] inclusive, stored [from, to + 1)
+  state             String    @default("reserved") // reserved | released
+  created_by        String?   @db.Uuid
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  released_at       DateTime? @db.Timestamptz(6)
+
+  @@index([booking_entity_id], map: "vehicle_reservations_booking_idx")
+  @@index([vehicle_entity_id, state], map: "vehicle_reservations_vehicle_idx")
+  @@map("vehicle_reservations")
+}
+
+// Migration 0076: the stored readiness of a Procurement assignment (fleet_sync); ready_date = when the last condition became true.
+model AssignmentReadiness {
+  procurement_entity_id     String   @id @db.Uuid
+  readiness                 String
+  ready_date                DateTime? @db.Date
+  open_advances_after_close Boolean  @default(false)
+  updated_at                DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([readiness], map: "assignment_readiness_state_idx")
+  @@map("assignment_readiness")
+}

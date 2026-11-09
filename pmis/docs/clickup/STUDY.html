@@ -1,0 +1,1732 @@
+<title>دراسة PMIS مقابل ClickUp</title>
+<meta name="claude:viewport-fit-sides" content="cover" />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Cairo:wght@600;800&family=IBM+Plex+Sans+Arabic:wght@400;600&family=IBM+Plex+Mono:wght@400&display=swap"
+/>
+<style>
+  /* Layout: one reading column with numbered deliverables; wide tables scroll in place. Accent = the project's own teal token. */
+  :root {
+    --bg: #f6f8f8;
+    --card: #ffffff;
+    --ink: #1d2526;
+    --mute: #5b6869;
+    --line: #dbe3e3;
+    --accent: #0f766e;
+    --accentSoft: #e3f3f1;
+    --done: #1f8a4c;
+    --doneBg: #e5f5ec;
+    --wait: #a86a00;
+    --waitBg: #fbf1dc;
+    --late: #c0362c;
+    --lateBg: #fbe7e5;
+    --open: #2563b8;
+    --openBg: #e6eefa;
+    --display: "Cairo", "Segoe UI", system-ui, sans-serif;
+    --body: "IBM Plex Sans Arabic", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121718;
+      --card: #1a2122;
+      --ink: #e6eeee;
+      --mute: #9aa9aa;
+      --line: #2c3738;
+      --accent: #3cc1b2;
+      --accentSoft: #173533;
+      --done: #4fc27f;
+      --doneBg: #173325;
+      --wait: #e3a844;
+      --waitBg: #33290f;
+      --late: #f07a6f;
+      --lateBg: #3a1c19;
+      --open: #7aa8ec;
+      --openBg: #1a2840;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121718;
+    --card: #1a2122;
+    --ink: #e6eeee;
+    --mute: #9aa9aa;
+    --line: #2c3738;
+    --accent: #3cc1b2;
+    --accentSoft: #173533;
+    --done: #4fc27f;
+    --doneBg: #173325;
+    --wait: #e3a844;
+    --waitBg: #33290f;
+    --late: #f07a6f;
+    --lateBg: #3a1c19;
+    --open: #7aa8ec;
+    --openBg: #1a2840;
+    color-scheme: dark;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15.5px;
+    line-height: 1.8;
+  }
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding-block: 32px 64px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--display);
+    text-wrap: balance;
+    line-height: 1.35;
+    margin: 0;
+  }
+  h1 {
+    font-size: 2rem;
+    font-weight: 800;
+  }
+  h2 {
+    font-size: 1.45rem;
+    font-weight: 800;
+    padding-top: 8px;
+  }
+  h3 {
+    font-size: 1.08rem;
+    font-weight: 600;
+    margin-top: 18px;
+  }
+  p {
+    margin: 0.5em 0;
+    max-width: 70ch;
+  }
+  a {
+    color: var(--accent);
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--mute);
+    letter-spacing: 0.04em;
+  }
+  header.top {
+    display: grid;
+    gap: 10px;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 20px;
+    margin-bottom: 24px;
+  }
+  .verdict {
+    background: var(--accentSoft);
+    border-radius: 10px;
+    padding: 16px 18px;
+    display: grid;
+    gap: 6px;
+  }
+  .verdict b {
+    font-family: var(--display);
+  }
+  section {
+    display: grid;
+    gap: 10px;
+    padding-block: 22px;
+    border-bottom: 1px solid var(--line);
+  }
+  ul {
+    margin: 0.3em 0;
+    padding-inline-start: 1.2em;
+  }
+  li {
+    margin: 0.2em 0;
+  }
+  .tbl {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.88rem;
+    min-width: 720px;
+  }
+  th,
+  td {
+    padding: 8px 10px;
+    text-align: start;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    font-family: var(--display);
+    font-weight: 600;
+    background: var(--bg);
+    white-space: nowrap;
+  }
+  tr:last-child td {
+    border-bottom: 0;
+  }
+  code,
+  .m {
+    font-family: var(--mono);
+    font-size: 0.84em;
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+  .pill {
+    display: inline-block;
+    padding: 1px 9px;
+    border-radius: 99px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .p0 {
+    background: var(--lateBg);
+    color: var(--late);
+  }
+  .p1 {
+    background: var(--waitBg);
+    color: var(--wait);
+  }
+  .p2 {
+    background: var(--openBg);
+    color: var(--open);
+  }
+  .p3 {
+    background: var(--doneBg);
+    color: var(--done);
+  }
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--mute);
+  }
+  .note {
+    border-inline-start: 3px solid var(--wait);
+    padding: 8px 12px;
+    background: var(--waitBg);
+    border-radius: 4px;
+    font-size: 0.92rem;
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .box {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    min-width: 0;
+  }
+  .box h3 {
+    margin-top: 0;
+  }
+  .sw {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sw span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+  }
+  .sw i {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    display: inline-block;
+    border: 1px solid var(--line);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+</style>
+
+<div class="wrap" dir="rtl" lang="ar">
+  <header class="top">
+    <div class="eyebrow">
+      AUDIT &amp; RESEARCH · لا تعديل على المستودع · 2026-11-08
+    </div>
+    <h1>دراسة واجهات PMIS Workspace مقارنةً بـ ClickUp</h1>
+    <p>
+      تحليل تصميمي وهندسي لأنماط ClickUp، وتدقيق لواجهة
+      <code>pmis/apps/web</code>، وخريطة فجوات وخطة تنفيذ على ثماني مراحل. لم
+      يُعدَّل أي ملف في المشروع.
+    </p>
+    <div class="verdict">
+      <b>الخلاصة</b>
+      <p>
+        المشروع لا يحتاج إلى إعادة كتابة. أساسه التصميمي متين: رموز تصميم موحّدة
+        بطبقتين، ودعم كامل للعربية والاتجاه من اليمين لليسار، ووضع داكن،
+        وإمكانية وصول جيدة. الفجوة مع ClickUp ليست في الألوان ولا الخطوط، بل في
+        <b>طبقة التفاعل</b>: لوحة أوامر تبحث في القائمة فقط، وغياب جدول بيانات
+        موحّد (42 جدولًا مكتوبًا يدويًا مقابل نحو 7 صفحات تستخدم TableKit)، ولا
+        فرز للأعمدة، ولا تحرير مباشر، ولا طرق عرض بديلة (لوحة/تقويم)، ولا حركة
+        عند فتح النوافذ. أوصي بالحفاظ على هوية المشروع الحالية (التركوازي وخط
+        Cairo) وعدم استيراد بنفسجي ClickUp، وبالاستثمار أولًا في جدول موحّد
+        ولوحة أوامر حقيقية.
+      </p>
+    </div>
+    <p class="note">
+      <b>حدود الدراسة:</b> فحصتُ ClickUp من مركز المساعدة الرسمي وصفحات الميزات
+      فقط، لا من حساب فعلي داخل التطبيق، لأن ذلك يتطلب تسجيل دخول لم يكن متاحًا.
+      لذلك لم أستخرج قيم نصف القطر والظلال وسلّم الخطوط لأن ClickUp لا يوثّقها.
+      الصور المرجعية روابط إلى لقطات منشورة في مركز المساعدة، ولم أتحقق من فتحها
+      دون تسجيل دخول. لم تُستخدم مهارات Replica وRea في هذه المرحلة، وخطة
+      استخدامها مذكورة في القسم 9.
+    </p>
+  </header>
+
+  <section id="s1">
+    <div class="eyebrow">01</div>
+    <h2>تحليل التصميم البصري في ClickUp</h2>
+    <ul>
+      <li>
+        <b>الألوان:</b> تتدرّج الهوية التسويقية بين <code>#FF02F0</code> و<code
+          >#FC6D2D</code
+        >
+        و<code>#6647F0</code> و<code>#0091FF</code>. أما البنفسجي
+        <code>#7B68EE</code> المنسوب إلى التطبيق القديم فمصدره موقع غير رسمي،
+        فهو غير مؤكد.
+      </li>
+      <li>
+        <b>السمات:</b> فاتح، أو داكن، أو تلقائي حسب النظام، مع عشرة ألوان تمييز
+        يختار منها كل مستخدم لنفسه، ووضع تباين عالٍ.
+      </li>
+      <li>
+        <b>ألوان الحالات:</b> يحددها المستخدم لكل حالة، ضمن مجموعات ثابتة: لم
+        تبدأ، ونشطة، ومنجزة، ومغلقة.
+      </li>
+      <li><b>الخطوط:</b> Plus Jakarta Sans للعناوين، وInter للنصوص.</li>
+      <li>
+        <b>الكثافة:</b> تُضبط في كل طريقة عرض على حدة، لا في إعداد عام. مثال ذلك
+        أحجام البطاقات (صغير/متوسط/كبير)، وخيار التفاف النص، وتغيير عرض الأعمدة.
+      </li>
+      <li>
+        <b>غير موثّق:</b> نصف القطر، والظلال، وسلّم الأحجام. أي رقم يُنسب إليها
+        تخمين.
+      </li>
+    </ul>
+    <p>
+      <b>[استنتاج]</b> يتفوق ClickUp بانضباط الكثافة والتسلسل البصري للمعلومات،
+      لا بلوحة ألوانه. لذلك فاستيراد ألوانه لا يضيف قيمة، والأجدى نقل قواعد
+      الكثافة والتخصيص لكل طريقة عرض.
+    </p>
+    <p>
+      <b>صور مرجعية:</b>
+      <a href="https://help.clickup.com/hc/article_attachments/35728888203927"
+        >لوحة السمات وألوان التمييز</a
+      >
+      ·
+      <a href="https://help.clickup.com/hc/article_attachments/35342039681047"
+        >قائمة تخصيص لوحة Board</a
+      >
+    </p>
+  </section>
+
+  <section id="s2">
+    <div class="eyebrow">02</div>
+    <h2>جرد مكونات واجهة ClickUp</h2>
+    <div class="grid2">
+      <div class="box">
+        <h3>التنقل</h3>
+        <ul>
+          <li>تنقّل عام وشريط جانبي رئيسي متداخل: مساحة ← مجلد ← قائمة.</li>
+          <li>مفضلات، وصندوق وارد، وشريط علوي فيه بحث (Cmd+K) وإنشاء سريع.</li>
+          <li>مسار تنقّل (breadcrumb) وترويسة موقع لها قائمة إعدادات «...».</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>شريط طرق العرض</h3>
+        <ul>
+          <li>
+            قائمة، ولوحة، وجدول، وتقويم، وGantt، وخط زمني، ونموذج، ومستند.
+          </li>
+          <li>تُثبَّت في الشريط، وتكون خاصة أو عامة أو محمية أو افتراضية.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>القائمة والجدول</h3>
+        <ul>
+          <li>
+            تجميع حسب الحالة أو المسؤول أو الأولوية أو الحقول المخصصة، مع طي
+            المجموعات.
+          </li>
+          <li>إضافة أعمدة من لوحة الحقول، وتحرير مباشر في الخلية.</li>
+          <li>إظهار المغلقة، و«وضعي» (Me mode)، والتفاف النص.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>منشئ الفلاتر</h3>
+        <ul>
+          <li>القاعدة: حقل ← معامل ← قيمة.</li>
+          <li>
+            ربط القواعد بـ «و/أو» مع مجموعات متداخلة، وتراجع، وبناء الفلتر
+            بالذكاء الاصطناعي.
+          </li>
+          <li>الفلتر يملأ مسبقًا قيم المهام الجديدة.</li>
+        </ul>
+        <p>
+          <a
+            href="https://help.clickup.com/hc/article_attachments/16845290908823"
+            >صورة منشئ الفلاتر</a
+          >
+        </p>
+      </div>
+      <div class="box">
+        <h3>لوحة Board</h3>
+        <ul>
+          <li>
+            غلاف للبطاقة، وإظهار الحقول الفارغة أو إخفاؤها، وطي الأعمدة الفارغة.
+          </li>
+          <li>لون العمود من لون المجموعة، وترتيب داخل العمود.</li>
+          <li>لا توجد حدود WIP موثّقة.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>نافذة المهمة</h3>
+        <ul>
+          <li>مسار تنقّل، ثم شبكة حقول، ثم الوصف.</li>
+          <li>
+            أقسام قابلة للطي: الحقول، والمهام الفرعية، والعلاقات، وقوائم التحقق،
+            والمرفقات.
+          </li>
+          <li>شريط جانبي للتعليقات والنشاط يمكن طيّه وتغيير عرضه.</li>
+        </ul>
+        <p>
+          <a
+            href="https://help.clickup.com/hc/article_attachments/34987980259735"
+            >أقسام المهمة</a
+          >
+          ·
+          <a
+            href="https://help.clickup.com/hc/article_attachments/35042075286551"
+            >الشريط الجانبي</a
+          >
+        </p>
+      </div>
+      <div class="box">
+        <h3>الإجراءات الجماعية</h3>
+        <ul>
+          <li>شريط عائم يظهر عند التحديد: إسناد، وتاريخ، وحالة، ونقل.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>لوحات المعلومات</h3>
+        <ul>
+          <li>«+ إضافة بطاقة» من مكتبة مصنّفة.</li>
+          <li>
+            فلاتر على مستوى اللوحة تسري على كل البطاقات، وفلاتر خاصة بكل بطاقة.
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="s3">
+    <div class="eyebrow">03</div>
+    <h2>جرد تجربة الاستخدام والتفاعل</h2>
+    <ul>
+      <li>
+        <b>الاختصارات</b> (معطّلة افتراضيًا ويفعّلها المستخدم):
+        <ul>
+          <li>
+            عامة: <code>T</code> مهمة جديدة، <code>S</code>/<code>Cmd+K</code>
+            البحث، <code>Cmd+\</code> طي الشريط الجانبي.
+          </li>
+          <li>الانتقال: <code>H</code> الرئيسية، <code>I</code> الوارد.</li>
+          <li>
+            المهمة: <code>Shift+S</code> الحالة، <code>Shift+A</code> المسؤول،
+            <code>M</code> أسندها إليّ.
+          </li>
+          <li>طرق العرض: <code>L</code> قائمة، <code>B</code> لوحة.</li>
+          <li>الوارد: <code>J/K</code> للتنقل بين العناصر.</li>
+        </ul>
+      </li>
+      <li>
+        <b>حفظ طرق العرض:</b> يظهر زر الحفظ فقط بعد تغيير شيء ما، وفيه: حفظ
+        للجميع، أو حفظ كطريقة عرض جديدة، أو تراجع عن التغييرات، أو تفعيل الحفظ
+        التلقائي.
+      </li>
+      <li>
+        <b>التراجع:</b> العناصر المحذوفة تبقى في سلة المحذوفات 30 يومًا. أما طرق
+        العرض والحالات والوسوم والتعليقات والأتمتة فلا يمكن استعادتها بعد الحذف.
+      </li>
+      <li>
+        <b>البحث:</b> شريط أوامر واحد يجمع البحث في كل العناصر مع فلاتر للنوع
+        والمسؤول والحالة، وأمر <code>create</code> للإنشاء.
+      </li>
+      <li>
+        <b>الحركة:</b> شبه غير موثّقة، والموثّق منها: زر الحفظ الذي يظهر بعد
+        التعديل، والتراجع، والسحب لإعادة ترتيب أقسام الشريط الجانبي.
+        <b>[افتراض]</b> أي تفاصيل عن توقيت الحركة أو منحنياتها تحتاج فحصًا حيًا
+        للتطبيق، ولم يجرِ.
+      </li>
+    </ul>
+    <p>
+      <a href="https://help.clickup.com/hc/article_attachments/44366765598999"
+        >صورة نافذة الاختصارات</a
+      >
+      ·
+      <a href="https://help.clickup.com/hc/article_attachments/42750142484631"
+        >قائمة خيارات التجميع</a
+      >
+    </p>
+  </section>
+
+  <section id="s4">
+    <div class="eyebrow">04</div>
+    <h2>الإعدادات والإدارة في ClickUp</h2>
+    <ul>
+      <li>
+        <b>التنظيم:</b> الإعدادات قسمان، إعدادات الحساب الشخصي وإعدادات مساحة
+        العمل، ولكل منهما شريط جانبي فيه أقسام: الأشخاص، والتطبيقات، والمساحات،
+        والأمان والصلاحيات، والفرق، وسجلات التدقيق.
+      </li>
+      <li>
+        <b>الأدوار:</b> مالك واحد، ومدير، وعضو، وعضو محدود (وبصيغة عرض فقط)،
+        وضيف. الأدوار المخصصة قائمة طويلة من مفاتيح التفعيل، بعضها مشروط، مثل
+        حذف العنصر «فقط إن كان المستخدم منشئه».
+      </li>
+      <li><b>صلاحيات المشاركة:</b> عرض، أو تعليق، أو تحرير، أو تحرير كامل.</li>
+      <li>
+        <b>فرض المصادقة الثنائية:</b> أربعة مستويات، من «غير مطلوب» إلى «إلزامي
+        فورًا للجميع»، مع عمود أمان في قائمة الأشخاص يبيّن من فعّلها.
+      </li>
+      <li>
+        <b>سجلات التدقيق:</b> تبويبات للمستخدم والمهمة والحقول والتسلسل الهرمي،
+        وأعمدتها التاريخ والمستخدم والدور والحدث والحالة.
+      </li>
+      <li>
+        <b>الإشعارات:</b> تُضبط لكل قناة على حدة (الوارد، والبريد، والمتصفح،
+        والجوال)، وفيها إعدادات مسبقة: افتراضي، ومركّز، وعند الإشارة فقط، ومخصص.
+      </li>
+      <li>
+        <b>الأتمتة:</b> نافذة تبني «مُشغّل ← شروط ← إجراءات»، تبدأ من قالب أو من
+        الصفر.
+      </li>
+      <li>
+        <b>مدير الحقول المخصصة:</b> مكان واحد يعرض كل الحقول ومواقع استخدامها.
+      </li>
+      <li>
+        <b>نمط الحفظ:</b> الإعدادات الشخصية تُحفظ بزر «حفظ التغييرات» صريح، وطرق
+        العرض بنموذج حفظ أو حفظ تلقائي أو تراجع.
+      </li>
+    </ul>
+    <p>
+      <b>[استنتاج]</b> ما يستحق النقل هو <b>بنية المعلومات</b>: إعدادات مقسمة في
+      شريط جانبي مجمّع، وإعدادات مسبقة للإشعارات. أما الصلاحيات المرنة على مستوى
+      كل عنصر فلا يُنصح بنقلها، لأن نموذج صلاحيات PMIS مبني على المنطقة والوحدة
+      ومصفوفة المسؤوليات، وتغييره يقع خارج النطاق ويخالف الضوابط.
+    </p>
+  </section>
+
+  <section id="s5">
+    <div class="eyebrow">05</div>
+    <h2>تدقيق واجهة المستودع الحالية</h2>
+    <p>
+      البنية الحالية: React 18، وVite، وTailwind 3، وRadix (Dialog وPopover
+      وTooltip وHoverCard)، وTanStack Query، وECharts، وlucide، وi18next
+      بالعربية والإنجليزية. فيها نحو 283 ملفًا.
+    </p>
+    <div class="grid2">
+      <div class="box">
+        <h3>نقاط قوة يجب الحفاظ عليها</h3>
+        <ul>
+          <li>
+            رموز تصميم بطبقتين: طبقة خام مأخوذة من frappe-ui بصيغة oklch، وطبقة
+            دلالية. ولا تكاد ألوان مكتوبة يدويًا تتسرب إلى الشيفرة: 12 قيمة hex
+            فقط، 11 منها احتياطية في <code>EChart.tsx</code>.
+          </li>
+          <li>
+            دلالات حالات ثابتة: منجز، ومفتوح، وبانتظار الاعتماد، ومتأخر، ومقفل.
+          </li>
+          <li>
+            دعم حقيقي للاتجاه من اليمين لليسار، ووضع داكن، وفاصل الشريط الجانبي
+            يعمل بلوحة المفاتيح.
+          </li>
+          <li>
+            الشريط الجانبي فيه مفضلات، وآخر الصفحات المفتوحة، وتصفية، ونمط مضغوط
+            بالأيقونات.
+          </li>
+          <li>
+            تفضيلات أعمدة لكل مستخدم، وطرق عرض محفوظة، وشريط إجراءات جماعية،
+            وتصفّح بالمؤشر (cursor).
+          </li>
+          <li>
+            تأكيد الهوية المرحلي (StepUp) عام ويديره الخادم، ونوافذ تأكيد بإبداء
+            سبب، ومسودات محفوظة داخل الأدراج الجانبية.
+          </li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>نقاط ضعف مرتبة حسب الأثر</h3>
+        <ul>
+          <li>
+            <code>CommandPalette</code> يبحث في عناوين القائمة فقط، والأسهم لا
+            تعمل فيه. والاختصارات المذكورة في المواصفات (<code>/</code> و<code
+              >?</code
+            >
+            و<code>g m</code> و<code>j/k</code>) غير منفّذة.
+          </li>
+          <li>
+            لا يوجد جدول موحّد: 42 جدول <code>&lt;table&gt;</code> مكتوب يدويًا
+            مقابل نحو 7 صفحات تستخدم TableKit.
+          </li>
+          <li>
+            لا فرز للأعمدة في أي مكان، رغم أن <code>onSort</code> مُعدّ في
+            SavedViews ولا يستدعيه أحد.
+          </li>
+          <li>لا تحرير مباشر في الخلايا، ولا تجميع، ولا مجاميع.</li>
+          <li>لا لوحة Board، ولا تقويم، ولا خط زمني.</li>
+          <li>لوحة المعلومات ثابتة لا يمكن تخصيصها.</li>
+          <li>
+            الإعدادات 17 تبويبًا في صف أزرار يلتف على أكثر من سطر، بلا تجميع ولا
+            بحث. و7 تبويبات منها بلا تتبّع للتغييرات غير المحفوظة، ولا تنبيه عند
+            مغادرة الصفحة.
+          </li>
+          <li>
+            لا حركة عند فتح النوافذ والأدراج والقوائم، ورسوم ECharts المتحركة لا
+            تحترم تفضيل تقليل الحركة.
+          </li>
+          <li>
+            التعليقات مسطّحة بلا ردود متداخلة أو تحرير، والإشعارات تعمل
+            بالاستطلاع الدوري (polling)، ولا نسخة جوال للجداول.
+          </li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">
+      <b>خلل صغير:</b> شارة الجرس تستخدم <code>bg-late</code> مع
+      <code>text-accentInk</code> (<code>Shell.tsx:182</code>)، وهو تركيب قد
+      يضعف التباين. يُراجع في المرحلة 1.
+    </p>
+  </section>
+
+  <section id="s6">
+    <div class="eyebrow">06</div>
+    <h2>تحليل الفجوات وخريطة الميزات</h2>
+    <p>
+      معاني التصنيفات: <span class="tag">REP</span> إعادة تطبيق النمط كما هو،
+      <span class="tag">ADA</span> تكييف، <span class="tag">NEW</span> مكوّن
+      جديد، <span class="tag">ARC</span> تحسين معماري،
+      <span class="tag">OPT</span> اختياري.
+    </p>
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>الميزة</th>
+            <th>ClickUp</th>
+            <th>المقابل عندنا</th>
+            <th>الناقص</th>
+            <th>التكييف لـ PMIS</th>
+            <th>التقنية</th>
+            <th>الأولوية / التكلفة / الخطر</th>
+            <th>التصنيف</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>جدول بيانات موحّد</td>
+            <td>جدول بأعمدة ديناميكية، وتجميع، وتحرير مباشر</td>
+            <td>TableKit (أجزاء) و42 جدولًا يدويًا</td>
+            <td>مكوّن واحد يجمع الفرز والتحميل الافتراضي والتحديد</td>
+            <td>
+              يُبنى فوق TableKit لا بدلًا منه، ويحترم إخفاء الأعمدة الممنوعة
+              (<code>forbidden</code>)
+            </td>
+            <td>
+              <code>@tanstack/react-table</code> و<code
+                >@tanstack/react-virtual</code
+              >
+              (بلا واجهة مرئية، ومن نفس عائلة Query)
+            </td>
+            <td><span class="pill p0">P0</span> كبيرة / متوسط</td>
+            <td>ARC</td>
+          </tr>
+          <tr>
+            <td>فرز الأعمدة</td>
+            <td>من رأس العمود</td>
+            <td>غير موجود</td>
+            <td>رؤوس قابلة للفرز مع <code>aria-sort</code></td>
+            <td>يرسل الفرز إلى الخادم بسبب التصفّح بالمؤشر</td>
+            <td>ضمن الجدول الموحّد، ويحتاج دعم الواجهة البرمجية</td>
+            <td><span class="pill p0">P0</span> متوسطة / منخفض</td>
+            <td>REP</td>
+          </tr>
+          <tr>
+            <td>لوحة الأوامر</td>
+            <td>بحث شامل وأوامر إنشاء</td>
+            <td>بحث في القائمة فقط</td>
+            <td>
+              بحث في المواقع والسجلات والمستخدمين، وتنقّل بالأسهم، ونتائج حديثة
+            </td>
+            <td>
+              البحث برقم الموقع أو اسمه أولًا، مع أوامر مثل «موقع جديد»
+              و«اعتماداتي»
+            </td>
+            <td>
+              <code>cmdk</code> (نحو 4kb)، وعلى الخادم بحث موجود أو نقطة اتصال
+              جديدة
+            </td>
+            <td><span class="pill p0">P0</span> متوسطة / منخفض</td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>اختصارات لوحة المفاتيح</td>
+            <td>مجموعة شاملة يفعّلها المستخدم</td>
+            <td>Ctrl+K فقط</td>
+            <td>
+              ما ورد في المواصفات: <code>/</code> و<code>?</code> و<code
+                >g</code
+              >
+              و<code>j/k</code>
+            </td>
+            <td>
+              معطّلة افتراضيًا مثل ClickUp، مع نافذة <code>?</code> تعرضها
+            </td>
+            <td>خطّاف واحد بسيط دون مكتبة</td>
+            <td><span class="pill p1">P1</span> صغيرة / منخفض</td>
+            <td>REP</td>
+          </tr>
+          <tr>
+            <td>تحرير مباشر</td>
+            <td>في خلية الجدول</td>
+            <td>عبر درج جانبي أو نافذة فقط</td>
+            <td>تحرير الحقول البسيطة (التاريخ، والمسؤول، والملاحظة)</td>
+            <td>
+              فقط للحقول التي لا تحتاج سببًا ولا تمر بمحطة اعتماد. الحقول
+              الخاضعة لبوابة مرحلة تبقى في الدرج
+            </td>
+            <td>ضمن الجدول الموحّد</td>
+            <td><span class="pill p1">P1</span> متوسطة / <b>عالٍ</b></td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>لوحة Board</td>
+            <td>أعمدة حسب الحالة مع سحب وإفلات</td>
+            <td>Pipeline للمحطات على لوحة المعلومات فقط</td>
+            <td>عرض المواقع أو المهام كبطاقات في أعمدة</td>
+            <td>
+              الأعمدة هي المحطات أو حالة الاعتماد.
+              <b>السحب لا يتجاوز بوابات المراحل</b>: إما عرض للقراءة فقط، أو
+              يستدعي واجهة الانتقال الحالية مع التحقق
+            </td>
+            <td><code>@dnd-kit/core</code> عند تفعيل السحب</td>
+            <td><span class="pill p2">P2</span> متوسطة / <b>عالٍ</b></td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>منشئ فلاتر و/أو</td>
+            <td>قواعد متداخلة</td>
+            <td>فلتر سريع وشرائح للفلاتر النشطة</td>
+            <td>مجموعات «و/أو»</td>
+            <td>يكفي «و» مع حقول محددة في البداية. «أو» المتداخلة اختيارية</td>
+            <td>مكوّن داخلي</td>
+            <td><span class="pill p2">P2</span> متوسطة / متوسط</td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>حفظ طرق العرض</td>
+            <td>زر حفظ يظهر بعد التعديل، وحفظ تلقائي، وتراجع</td>
+            <td>SavedViews موجود</td>
+            <td>إشارة إلى أن العرض تغيّر، وزر تراجع</td>
+            <td>تطوير SavedViews، لا استبداله</td>
+            <td>تعديل داخلي</td>
+            <td><span class="pill p1">P1</span> صغيرة / منخفض</td>
+            <td>REP</td>
+          </tr>
+          <tr>
+            <td>تجميع الصفوف</td>
+            <td>حسب أي حقل</td>
+            <td>غير موجود</td>
+            <td>تجميع حسب المنطقة أو المجموعة أو المحطة أو المقاول</td>
+            <td>مع عدد في رأس كل مجموعة</td>
+            <td>إمكانية التجميع في TanStack Table</td>
+            <td><span class="pill p2">P2</span> متوسطة / متوسط</td>
+            <td>REP</td>
+          </tr>
+          <tr>
+            <td>بنية الإعدادات</td>
+            <td>شريط جانبي مجمّع</td>
+            <td>17 تبويبًا في صف واحد</td>
+            <td>تجميع وبحث وتنبيه عند ترك تغييرات غير محفوظة</td>
+            <td>
+              مجموعات: العمل والمواعيد، والمستندات، والأشخاص والظهور،
+              والإشعارات، والنظام
+            </td>
+            <td><code>useBlocker</code> من react-router الموجود</td>
+            <td><span class="pill p1">P1</span> صغيرة / منخفض</td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>إعدادات الإشعارات المسبقة</td>
+            <td>لكل قناة: افتراضي، ومركّز، وعند الإشارة فقط</td>
+            <td>تبويب الإشعارات</td>
+            <td>إعدادات مسبقة جاهزة</td>
+            <td>دون تغيير منطق الإرسال</td>
+            <td>واجهة فقط</td>
+            <td><span class="pill p3">P3</span> صغيرة / منخفض</td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>حركة النوافذ والقوائم</td>
+            <td>انتقالات خفيفة</td>
+            <td>شبه معدومة</td>
+            <td>دخول وخروج للنوافذ والأدراج والقوائم والتنبيهات</td>
+            <td>معيار موحّد (القسم 7) يحترم تقليل الحركة</td>
+            <td>CSS مع <code>data-state</code> في Radix، دون مكتبة</td>
+            <td><span class="pill p1">P1</span> صغيرة / منخفض</td>
+            <td>REP</td>
+          </tr>
+          <tr>
+            <td>تراجع بعد الإجراء</td>
+            <td>تنبيه فيه زر تراجع</td>
+            <td>تنبيه دون تراجع</td>
+            <td>زر «تراجع» للإجراءات القابلة للعكس</td>
+            <td>فقط حيث تدعم الواجهة البرمجية العكس. لا تراجع عن الاعتمادات</td>
+            <td>توسيع Toast</td>
+            <td><span class="pill p2">P2</span> صغيرة / متوسط</td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>قوائم سياقية وقوائم منسدلة</td>
+            <td>منتشرة</td>
+            <td>Popover فقط</td>
+            <td>قائمة «...» لكل صف ونقر يمين</td>
+            <td>إجراءات الصف بحسب الصلاحية</td>
+            <td>
+              <code>@radix-ui/react-dropdown-menu</code> و<code
+                >context-menu</code
+              >
+              (نفس العائلة)
+            </td>
+            <td><span class="pill p1">P1</span> صغيرة / منخفض</td>
+            <td>NEW</td>
+          </tr>
+          <tr>
+            <td>لوحة معلومات قابلة للتخصيص</td>
+            <td>إضافة بطاقات وفلاتر للوحة كلها</td>
+            <td>تخطيط ثابت مع فلاتر في الرابط</td>
+            <td>إظهار البطاقات وإخفاؤها وترتيبها لكل مستخدم</td>
+            <td>إظهار وإخفاء وترتيب فقط، بلا شبكة سحب حرة</td>
+            <td>تفضيلات محلية، ثم نقل الحفظ إلى الخادم لاحقًا</td>
+            <td><span class="pill p3">P3</span> متوسطة / منخفض</td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>نشاط موحّد للسجل</td>
+            <td>تعليقات ونشاط في شريط واحد</td>
+            <td>Comments وFieldHistory منفصلان</td>
+            <td>دمجهما في خط زمني واحد داخل الدرج</td>
+            <td>للقراءة فقط بالنسبة لسجل التغييرات</td>
+            <td>مكوّن داخلي</td>
+            <td><span class="pill p2">P2</span> متوسطة / منخفض</td>
+            <td>NEW</td>
+          </tr>
+          <tr>
+            <td>الجداول على الجوال</td>
+            <td>عرض قائمة مخصص للجوال</td>
+            <td>تمرير أفقي فقط</td>
+            <td>بطاقات بديلة على الشاشات الضيقة لـ «عملي» و«الاعتمادات»</td>
+            <td>الأولوية لفرق الميدان (CW/TE)</td>
+            <td>CSS</td>
+            <td><span class="pill p2">P2</span> متوسطة / منخفض</td>
+            <td>ADA</td>
+          </tr>
+          <tr>
+            <td>تقويم وGantt</td>
+            <td>طرق عرض كاملة</td>
+            <td>غير موجود</td>
+            <td>عرض زمني للمواقع ومدد التأخير</td>
+            <td>للقراءة فقط في البداية، فوق تواريخ المحطات الموجودة</td>
+            <td>تقويم بسيط داخلي. Gantt مؤجل</td>
+            <td><span class="pill p3">P3</span> كبيرة / متوسط</td>
+            <td>OPT</td>
+          </tr>
+          <tr>
+            <td>الأتمتة</td>
+            <td>مُشغّل ← شرط ← إجراء</td>
+            <td>قواعد SLA وقواعد التنبيه</td>
+            <td>منشئ عام</td>
+            <td><b>لا يُنصح به</b> الآن، لأنه يمس منطق الأعمال وسير العمل</td>
+            <td>,</td>
+            <td>خارج النطاق</td>
+            <td>OPT</td>
+          </tr>
+          <tr>
+            <td>الأدوار المخصصة ومشاركة العناصر</td>
+            <td>مفاتيح تفعيل لكل صلاحية</td>
+            <td>Profiles (شبكة وحدة × إجراء) وMatrix</td>
+            <td>عرض الفروقات وتعبئة جماعية في Matrix</td>
+            <td>تحسين الواجهة فقط، دون تغيير نموذج الصلاحيات</td>
+            <td>مكوّن داخلي</td>
+            <td><span class="pill p2">P2</span> متوسطة / متوسط</td>
+            <td>ADA</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="s7">
+    <div class="eyebrow">07</div>
+    <h2>نظام التصميم المقترح لـ PMIS</h2>
+    <p>
+      <b>المبدأ:</b> نُكمل النظام الحالي ولا نستبدله. يبقى
+      <code>tokens.css</code> المصدر الوحيد للرموز، وتضاف إليه الرموز الناقصة
+      فقط.
+    </p>
+    <div class="grid2">
+      <div class="box">
+        <h3>الألوان (موجودة)</h3>
+        <div class="sw">
+          <span><i style="background: var(--accent)"></i>accent</span
+          ><span><i style="background: var(--done)"></i>done</span
+          ><span><i style="background: var(--open)"></i>open</span
+          ><span><i style="background: var(--wait)"></i>wait</span
+          ><span><i style="background: var(--late)"></i>late</span>
+        </div>
+        <p>
+          تضاف رموز لتعبئة الصف المحدد والصف عند التمرير، ولون حلقة التركيز.
+          الأولوية تُعرض بأيقونة وشكل لا بلون جديد.
+        </p>
+      </div>
+      <div class="box">
+        <h3>الخطوط</h3>
+        <p>
+          يبقى Cairo بسلّمه الحالي (11 إلى 26px). تُعتمد أربعة مستويات للواجهة
+          فقط: 12 للبيانات الوصفية، و13 للجداول، و14 للنصوص، و18 و24 للعناوين.
+          والأرقام دائمًا بعرض ثابت (tabular).
+        </p>
+      </div>
+      <div class="box">
+        <h3>المسافات والكثافة</h3>
+        <p>
+          شبكة 4px. كثافتان: مضغوطة (صف 32px) ومريحة (40px)، مطبّقتان عبر
+          <code>rowPad</code> الموجود.
+        </p>
+      </div>
+      <div class="box">
+        <h3>نصف القطر والظلال</h3>
+        <p>
+          6px للأزرار والحقول، و8px للبطاقات، و12px للنوافذ. ثلاثة ظلال فقط:
+          للقوائم المنبثقة، والدرج، والنافذة، وكلها موجودة في
+          <code>--shadow-*</code>.
+        </p>
+      </div>
+      <div class="box">
+        <h3>الحركة (جديد)</h3>
+        <ul>
+          <li>
+            <code>--dur-1:120ms</code> للتمرير والضغط، و<code
+              >--dur-2:180ms</code
+            >
+            للقوائم والتلميحات، و<code>--dur-3:240ms</code> للدرج والنافذة.
+          </li>
+          <li>
+            منحنى الدخول <code>cubic-bezier(.2,.8,.2,1)</code>، والخروج أسرع
+            بنحو 30%.
+          </li>
+          <li>
+            تُستخدم الشفافية والإزاحة فقط، ويُلغى كل شيء عند تفعيل
+            <code>prefers-reduced-motion</code>، بما في ذلك ECharts.
+          </li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>المكونات الموحّدة</h3>
+        <ul>
+          <li>Button: الأنواع primary وdone وdanger وghost، مع حالة تحميل.</li>
+          <li>Input وSelect وCombobox.</li>
+          <li>
+            <b>DataTable</b>، وDrawer (يُبنى على DrawerFrame الموجود)، وDialog،
+            وMenu وContextMenu.
+          </li>
+          <li>
+            StatusBadge مرتبط بالرموز <code>state-*</code>، وToast مع تراجع،
+            وCommand.
+          </li>
+          <li>Empty وError وSkeleton (موجودة في States).</li>
+        </ul>
+      </div>
+    </div>
+    <p>
+      <b>القاعدة:</b> لا CSS خاص بأي صفحة. كل صفحة جديدة تُبنى من هذه المكونات،
+      وأي ستايل جديد يُراجع كتعديل على النظام نفسه.
+    </p>
+  </section>
+
+  <section id="s8">
+    <div class="eyebrow">08</div>
+    <h2>خارطة طريق التطوير</h2>
+    <p>
+      المراحل متتابعة، وكل واحدة تنتهي باختبارات Playwright بالعربية والإنجليزية
+      وبالوضعين الفاتح والداكن، ومقارنة لقطات قبل وبعد، وقياس حجم الحزمة.
+    </p>
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>المرحلة</th>
+            <th>المحتوى</th>
+            <th>معيار القبول</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1 · الرموز والنظام</td>
+            <td>
+              رموز الحركة والتحديد والتركيز، ومعالجة تباين شارة الجرس، وانتقالات
+              <code>data-state</code> لمكونات Radix
+            </td>
+            <td>
+              اختبار التباين <code>contrast.test.ts</code> ينجح في الوضعين
+            </td>
+          </tr>
+          <tr>
+            <td>2 · الإطار والتنقل</td>
+            <td>
+              لوحة أوامر حقيقية (cmdk)، واختصارات المواصفات، ومسار تنقّل في
+              <code>PageHeader</code>، وترتيب أزرار الشريط العلوي على الجوال
+            </td>
+            <td>البحث برقم الموقع يفتح الموقع بثلاث ضغطات أو أقل</td>
+          </tr>
+          <tr>
+            <td>3 · المكونات الأساسية</td>
+            <td>
+              DataTable موحّد فوق TableKit مع فرز وتحميل افتراضي، وMenu
+              وContextMenu، وToast مع تراجع
+            </td>
+            <td>مكوّن واحد يغطي صفحتي Sites وRegister دون تراجع في الوظائف</td>
+          </tr>
+          <tr>
+            <td>4 · الوحدات والبيانات</td>
+            <td>
+              نقل الـ 42 جدولًا تدريجيًا، وتحرير مباشر محدود، وتجميع، وBoard
+              للقراءة فقط لمحطات المواقع، وواجهات CW وTE
+            </td>
+            <td>
+              كل الاختبارات الحالية تنجح، ولا يُتجاوز أي انتقال بين المراحل
+            </td>
+          </tr>
+          <tr>
+            <td>5 · لوحات المعلومات</td>
+            <td>
+              إظهار البطاقات وإخفاؤها وترتيبها، واحترام ECharts لتقليل الحركة،
+              وفلاتر على مستوى اللوحة
+            </td>
+            <td>الأرقام مطابقة قبل التغيير وبعده</td>
+          </tr>
+          <tr>
+            <td>6 · الإعدادات والإدارة</td>
+            <td>
+              شريط جانبي مجمّع للإعدادات مع بحث، وتنبيه عند ترك تغييرات غير
+              محفوظة في كل التبويبات، وعرض الفروقات في Matrix
+            </td>
+            <td>لا يضيع أي تعديل عند مغادرة الصفحة</td>
+          </tr>
+          <tr>
+            <td>7 · الحركة والتفاعلات الدقيقة</td>
+            <td>
+              تطبيق معيار الحركة، والسحب في Board إن اعتُمد (عبر واجهة الانتقال
+              الحالية)
+            </td>
+            <td>لا تعارض مع تفضيل تقليل الحركة</td>
+          </tr>
+          <tr>
+            <td>8 · التجاوب واللمسات الأخيرة</td>
+            <td>بطاقات بديلة للجوال، وتدقيق إمكانية الوصول، والأداء</td>
+            <td>عرض 400px بلا تمرير أفقي في الصفحات الأساسية</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="s9">
+    <div class="eyebrow">09</div>
+    <h2>المكتبات والمهارات الموصى بها</h2>
+    <div class="grid2">
+      <div class="box">
+        <h3>مكتبات تُضاف (بمبرر)</h3>
+        <ul>
+          <li>
+            <code>@tanstack/react-table</code> و<code>react-virtual</code>: بلا
+            واجهة مرئية، فلا تفرض ستايلًا، وتنتمي لعائلة Query المستخدمة أصلًا.
+          </li>
+          <li><code>cmdk</code>: لوحة أوامر صغيرة وسهلة الوصول.</li>
+          <li>
+            <code>@radix-ui/react-dropdown-menu</code>
+            و<code>context-menu</code>: من العائلة نفسها الموجودة في المشروع.
+          </li>
+          <li><code>@dnd-kit/core</code>: فقط إن اعتُمد السحب في Board.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>لا يُنصح بها الآن</h3>
+        <ul>
+          <li>
+            <b>Framer Motion وGSAP:</b> الانتقالات المطلوبة تكفيها CSS مع
+            <code>data-state</code> في Radix، وتكلفة هذه المكتبات في حجم الحزمة
+            لا مبرر لها في هذه المرحلة.
+          </li>
+          <li><b>مكتبة Gantt جاهزة:</b> تُؤجل إلى أن يُعتمد العرض الزمني.</li>
+          <li><b>استبدال Tailwind أو Radix:</b> لا مبرر تقني لذلك.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>مهارات للتنفيذ</h3>
+        <ul>
+          <li>
+            <code>replica-skill:replica-recon</code> و<code>replica-diff</code>:
+            استطلاع واجهة مرجعية ومقارنة اللقطات بعد كل مرحلة.
+          </li>
+          <li>
+            أدوات Rea لالتقاط سيناريوهات المتصفح ومقارنتها (<code
+              >capture_browser_scenario</code
+            >
+            و<code>compare_web_screenshots</code>)، لكن تقييم الأمان لخادم Rea
+            يوصي بالمراجعة قبل استخدامه على بيانات حقيقية.
+          </li>
+          <li>
+            <code>ui-consistency</code>: لاستخراج الأنماط والتحقق منها في كل
+            صفحة.
+          </li>
+          <li>
+            <code>emil-kowalski-skills:animate</code>
+            و<code>vectorlab-ux-skills:motion</code>: لمعيار الحركة.
+          </li>
+          <li>
+            <code>audit-suite</code> و<code>webapp-testing</code> وPlaywright:
+            لاختبارات عدم التراجع.
+          </li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">
+      لفحص ClickUp حيًا (مثل توقيت الحركات وكثافة الصفوف الفعلية) يلزم حساب
+      تجريبي يُسجَّل الدخول إليه في متصفح الجلسة. هذا ممكن قبل المرحلة 7 إذا
+      رغبتم.
+    </p>
+  </section>
+
+  <section id="s10">
+    <div class="eyebrow">10</div>
+    <h2>الأولويات وتقييم المخاطر</h2>
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>الخطر</th>
+            <th>الاحتمال</th>
+            <th>الأثر</th>
+            <th>التخفيف</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              أن يتجاوز التحرير المباشر أو السحب بوابات المراحل أو شرط إبداء
+              السبب
+            </td>
+            <td>متوسط</td>
+            <td>عالٍ</td>
+            <td>
+              يقتصر على حقول محددة في قائمة مسموحات، وكل كتابة تمر عبر الواجهة
+              البرمجية الحالية، ويضاف اختبار لكل بوابة
+            </td>
+          </tr>
+          <tr>
+            <td>تراجع في الوظائف عند نقل الـ 42 جدولًا</td>
+            <td>عالٍ</td>
+            <td>متوسط</td>
+            <td>
+              ينقل جدول واحد في كل PR مع اختباراته، ويبقى القديم حتى ينجح الجديد
+            </td>
+          </tr>
+          <tr>
+            <td>كسر عرض الأعمدة الممنوعة (<code>forbidden</code>)</td>
+            <td>منخفض</td>
+            <td>عالٍ</td>
+            <td>
+              يبقى الجدول الموحّد ملتزمًا بـ <code>reconcile</code> الموجود في
+              tablePrefs
+            </td>
+          </tr>
+          <tr>
+            <td>تضخّم حجم الحزمة</td>
+            <td>متوسط</td>
+            <td>متوسط</td>
+            <td>سقف للحجم يُفحص في كل مرحلة، وتحميل كسول للصفحات الثقيلة</td>
+          </tr>
+          <tr>
+            <td>تعارض مع العمل الجاري في المستودع</td>
+            <td>عالٍ</td>
+            <td>متوسط</td>
+            <td>
+              التنفيذ في مستودع جديد كما طلبتم، ونقل المكونات بعد استقرارها
+            </td>
+          </tr>
+          <tr>
+            <td>تقليد بصري قد يمس العلامة التجارية لـ ClickUp</td>
+            <td>منخفض</td>
+            <td>متوسط</td>
+            <td>تُنقل الأنماط فقط، بلا ألوانه ولا أصوله، وتبقى هوية PMIS</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <b>ترتيب البدء الموصى به:</b> المرحلة 1، ثم 2 (لوحة الأوامر)، ثم 3 (الجدول
+      الموحّد). هذه الثلاثة تحقق أكبر تحسن ملموس بأقل خطر على منطق الأعمال.
+    </p>
+    <p>
+      <b>الافتراض الذي يغيّر الخطة إن كان خاطئًا:</b> أن الواجهة البرمجية تدعم
+      الفرز والبحث الشامل على الخادم. إن لم تكن تدعمهما فالمرحلتان 2 و3 تحتاجان
+      عملًا على الخادم، وهو ما يستلزم موافقة منفصلة.
+    </p>
+  </section>
+
+  <section id="s11">
+    <div class="eyebrow">11 · ملحق من بيئة تجريبية حقيقية</div>
+    <h2>كيف يخزّن ClickUp طرق العرض والحقول والحالات</h2>
+    <p>
+      أنشأنا عبر أداة ClickUp قائمة «PMIS Sites (sandbox)» في حساب المالك.
+      حالاتها هي المحطات (من التصميم والاستحواذ حتى On Air)، وفيها ستة حقول،
+      وثمانية مواقع وهمية، وخمس طرق عرض. ثم قرأنا تعريفاتها كما يحفظها الخادم.
+      هذه <b>حقائق مقروءة</b> من الواجهة البرمجية، لا من التوثيق.
+      <a href="(private ClickUp sandbox link, not published)"
+        >فتح القائمة</a
+      >
+      (يتطلب تسجيل الدخول).
+    </p>
+    <div class="grid2">
+      <div class="box">
+        <h3>طريقة العرض</h3>
+        <ul>
+          <li>
+            مفاتيح مشتركة بين كل الأنواع: <code>filters</code> و<code
+              >grouping</code
+            >
+            و<code>sorting</code> و<code>columns</code> و<code>settings</code>،
+            و<code>visibility</code> (عامة أو خاصة أو شخصية).
+          </li>
+          <li>
+            الفلتر قائمة شروط <code>{field, op, values}</code>، والمعاملات:
+            <code>EQ</code> و<code>NOT</code> و<code>GT</code> و<code>ANY</code>
+            و<code>IS SET</code> وغيرها.
+          </li>
+          <li>
+            التداخل محفوظ في <code>filter_groups</code> (مصفوفة فهارس متداخلة)
+            و<code>filter_group_ops</code> (قائمة AND/OR بالترتيب).
+          </li>
+          <li>
+            كائن إعدادات خاص بكل نوع، مثل <code>board_settings</code> (حدود WIP
+            لكل حالة، وتقسيم أفقي حسب حقل)، و<code>calendar_settings</code> (وضع
+            الحدث على تاريخ حقل مخصص)، و<code>gantt_settings</code> (المسار
+            الحرج).
+          </li>
+          <li>
+            الكتابة تستبدل الكائن كله، والخادم يملأ القيم الافتراضية لما لم
+            يُرسل.
+          </li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>الحقل المخصص</h3>
+        <ul>
+          <li>
+            الشكل:
+            <code
+              >{id, name, type, type_config, entity, required, private,
+              default_value}</code
+            >.
+          </li>
+          <li>
+            الأنواع التي جُرّبت: <code>drop_down</code>، وفيه
+            <code>options[{id,name,color,orderindex}]</code>،
+            و<code>date</code>، و<code>manual_progress</code> ومعه
+            <code>{start,end}</code>، و<code>short_text</code>.
+          </li>
+          <li>
+            يرتبط الحقل بموقع واحد: مساحة العمل، أو المساحة، أو المجلد، أو
+            القائمة. والفلاتر تشير إليه بالصيغة <code>cf_&lt;uuid&gt;</code>.
+          </li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>الحالات</h3>
+        <ul>
+          <li>
+            الشكل: <code>{id, status, color, type, orderindex}</code>، والنوع
+            <code>open</code> أو <code>custom</code> أو <code>done</code> أو
+            <code>closed</code>، مع حالة <code>open</code> واحدة وحالة
+            <code>closed</code> واحدة.
+          </li>
+          <li>القائمة إما ترث حالات المستوى الأعلى أو تستبدلها.</li>
+          <li>
+            حذف حالة يتطلب خريطة إعادة توجيه للمهام (<code>remap_to</code>)، مع
+            خيار تجربة بلا تنفيذ (<code>dry_run</code>).
+          </li>
+        </ul>
+      </div>
+    </div>
+    <h3>ما نقترح أخذه لـ PMIS</h3>
+    <ul>
+      <li>
+        <b>SavedViews:</b> توحيد ما يحفظه في كائن واحد
+        <code
+          >{filters, filter_groups, grouping, sorting, columns, settings,
+          visibility}</code
+        >، يُقرأ ويُكتب كاملًا. هذا يجعل إضافة أنواع عرض جديدة (لوحة وتقويم)
+        مسألة إضافة كائن <code>*_settings</code> جديد لا أكثر.
+      </li>
+      <li>
+        <b>مفاتيح الفلاتر:</b> الحقول تُعرّف بمعرّف ثابت لا باسم. وهذا متوافق مع
+        <code>ColDef.id</code> الموجود.
+      </li>
+      <li>
+        <b>حدود WIP في اللوحة:</b> فكرة مناسبة لمحطات العمل الميداني (CW وTE).
+        مثال ذلك تنبيه إذا تجاوز عدد المواقع في مرحلة الأعمال المدنية سعة
+        المقاول. هي <b>عرض وتحذير فقط</b>، لا قيد على الانتقال بين المراحل.
+      </li>
+      <li>
+        <b>حذف قيمة من قائمة إعدادات:</b> نمط «إعادة التوجيه مع تجربة بلا تنفيذ»
+        نموذج جيد لشاشة Lists في الإعدادات، لأنه يمنع ترك سجلات يتيمة.
+      </li>
+      <li>
+        <b>ما لا نأخذه:</b> مرونة إنشاء الحقول والحالات لكل قائمة. بوابات
+        المراحل عندنا ثابتة ومرتبطة بمصفوفة المسؤوليات، وجعلها قابلة للتعديل
+        الحر يخالف الضوابط.
+      </li>
+    </ul>
+  </section>
+
+  <section id="s12">
+    <div class="eyebrow">12 · ملحق قياسات من تسجيلات الشاشة</div>
+    <h2>القياس الفعلي للوحة Board والتقويم في ClickUp</h2>
+    <p>
+      المصدر ثلاثة تسجيلات سجّلها المالك للبيئة التجريبية، بدقة 1920×1020 ونحو
+      29 إطارًا في الثانية. حُسبت التوقيتات من الفروق بين الإطارات، فدقتها
+      ±33ms. والأبعاد مقيسة على تكبير متصفح يُرجَّح أنه 125%، فتُقسم على 1.25
+      تقريبًا للحصول على قيم CSS. أما الألوان فمأخوذة من فيديو مضغوط، وقد تنحرف
+      بنحو ±3 في كل قناة لونية.
+    </p>
+    <div class="grid2">
+      
+      
+      
+      
+    </div>
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>العنصر</th>
+            <th>القيمة المقيسة</th>
+            <th>ملاحظة</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>عرض العمود / الفجوة بين الأعمدة</td>
+            <td>330 / 10px</td>
+            <td>تقريبًا 264 / 8px بقيم CSS</td>
+          </tr>
+          <tr>
+            <td>البطاقة</td>
+            <td>310×160px، زاوية نحو 8px، حد 1px</td>
+            <td>بلا ظل في وضع السكون</td>
+          </tr>
+          <tr>
+            <td>خلفية العمود</td>
+            <td>
+              لون الحالة مخففًا جدًا، مثل <code>#fcf6f1</code> للأعمال المدنية
+            </td>
+            <td>الحالة تُقرأ من العمود لا من البطاقة</td>
+          </tr>
+          <tr>
+            <td>الزر الأساسي</td>
+            <td><code>#1f1f1f</code> بنص أبيض</td>
+            <td>
+              محايد، والبنفسجي لا يظهر إلا في التحديد (<code>#f0effe</code>)
+            </td>
+          </tr>
+          <tr>
+            <td>التقاط البطاقة للسحب</td>
+            <td>فوري (إطار واحد)</td>
+            <td>ميل 2 إلى 3 درجات مع ظل</td>
+          </tr>
+          <tr>
+            <td>الإفلات</td>
+            <td>170 إلى 200ms بتباطؤ في النهاية (ease-out)</td>
+            <td>ثقة متوسطة إلى عالية</td>
+          </tr>
+          <tr>
+            <td>فتح نافذة المهمة</td>
+            <td>نحو 180ms: تعتيم الخلفية ثم ظهور النافذة</td>
+            <td>بلا تكبير ولا انزلاق</td>
+          </tr>
+          <tr>
+            <td>قائمة الفلاتر / قائمة الحساب</td>
+            <td>نحو 67ms / نحو 130ms</td>
+            <td>شبه فورية</td>
+          </tr>
+          <tr>
+            <td>التبديل بين طرق العرض</td>
+            <td>فوري</td>
+            <td>أشرطة Gantt تنمو خلال نحو 130ms</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <b>[حقيقة مرصودة]</b> سمح ClickUp بنقل بطاقة من «التصميم والاستحواذ» إلى
+      «التصاريح» مباشرة، ومن «الأعمال المدنية» رجوعًا إلى «التصاريح»، دون أي
+      تحقق ولا رسالة. هذا السلوك <b>لا يصلح لنظامنا كما هو</b>.
+    </p>
+    <p>
+      <b>[حقيقة مرصودة]</b> طريقة العرض «Sites table» التي أنشأناها في البيئة
+      التجريبية ظهرت فيها رسالة Validation Error. السبب المرجّح الفلتر المتداخل
+      التجريبي الذي أضفناها إليها. لا علاقة لذلك بمشروعنا، لكنه يحتاج تصحيحًا في
+      البيئة التجريبية.
+    </p>
+    <h3>ما نعتمده في لوحة المحطات لـ PMIS</h3>
+    <ul>
+      <li>
+        <b>الأعمدة:</b> كل عمود محطة، بخلفية مخففة من رمز الحالة، وفي رأسه شريحة
+        الحالة وعدد المواقع. وتبقى الأعمدة الفارغة بعرضها الكامل مع نص إرشادي،
+        لكي يحافظ مسار التنفيذ على شكله.
+      </li>
+      <li>
+        <b>السحب:</b> نأخذ عن ClickUp الالتقاط الفوري بالميل والظل والمكان
+        الفارغ، والإفلات خلال 180ms بتباطؤ في النهاية.
+      </li>
+      <li>
+        <b>بوابات المراحل:</b> تُفحص البوابة أثناء مرور البطاقة فوق العمود.
+        العمود المغلق يظهر رماديًا بقفل وتلميح يذكر السبب. والإفلات المرفوض يعيد
+        البطاقة إلى مكانها بهزة قصيرة مدتها نحو 200ms.
+      </li>
+      <li>
+        <b>القفز فوق المحطات:</b> النقل إلى أبعد من المحطة التالية يفتح قائمة
+        تحقق البوابة (التصاريح، والكهرباء)، ولا ينفّذ الانتقال إلا بعدها. والعدد
+        في رأس العمود لا يتغير إلا بعد أن يؤكد الخادم النقل.
+      </li>
+      <li>
+        <b>البطاقة:</b> نضيف إليها مؤشرًا صغيرًا لجاهزية البوابة، مثل «3/4
+        مستندات»، فهذا ما تفتقده بطاقات ClickUp.
+      </li>
+      <li>
+        <b>التقويم:</b> نأخذ شريط «غير مجدول / متأخر» الجانبي، وإطار اليوم
+        الحالي، ووضع الحدث على تاريخ On Air المخطط. وإعادة الجدولة بالسحب تتطلب
+        تأكيدًا يذكر المهام المرتبطة.
+      </li>
+    </ul>
+  </section>
+
+  <section id="s13">
+    <div class="eyebrow">13 · ملحق قياسات طريقة عرض القائمة</div>
+    <h2>القائمة المجمّعة في ClickUp: أساس الجدول الموحّد</h2>
+    <p>
+      المصدر مقطع مدته 29.7 ثانية. تُقسم الأبعاد على 1.25 تقريبًا للحصول على قيم
+      CSS، بافتراض تكبير المتصفح نفسه المستنتج في مقاطع اللوحة (125%).
+      <b>لم تظهر في المقطع:</b> التحرير المباشر في الخلية، وقائمة الفلاتر،
+      والفرز، وتحديد الصفوف وشريط الإجراءات الجماعية، وطي المجموعات.
+    </p>
+    <div class="grid2">
+      
+      
+      
+    </div>
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>العنصر</th>
+            <th>القيمة</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ارتفاع الصف</td>
+            <td>
+              نحو 35px بقيم CSS، مع خطوط أفقية فقط بلون
+              <code>#efefef</code> وبلا خطوط عمودية
+            </td>
+          </tr>
+          <tr>
+            <td>شريحة الحالة في رأس المجموعة</td>
+            <td>نحو 20px، بحروف كبيرة وأيقونة، وزاوية نحو 5px</td>
+          </tr>
+          <tr>
+            <td>خلفية الصف عند التمرير</td>
+            <td><code>#fbfbfb</code>، وهي خافتة جدًا تكاد لا تُرى</td>
+          </tr>
+          <tr>
+            <td>ظهور أدوات الصف</td>
+            <td>فوري (نحو 33ms)</td>
+          </tr>
+          <tr>
+            <td>قائمة التجميع</td>
+            <td>33 إلى 66ms، ويُغلق فورًا</td>
+          </tr>
+          <tr>
+            <td>نافذة المهمة</td>
+            <td>
+              تُفتح خلال نحو 150ms بتلاشٍ وتكبير خفيف، والتعتيم خلفها نحو 60%
+              أسود، وتُغلق فورًا
+            </td>
+          </tr>
+          <tr>
+            <td>التحميل</td>
+            <td>هيكل رمادي بارتفاع الصف نفسه</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>ما نعتمده في الجدول الموحّد لـ PMIS</h3>
+    <ul>
+      <li>
+        <b>التجميع:</b> حسب المحطة أو المنطقة أو المقاول، برأس مجموعة يضم شريحة
+        الحالة والعدد وسهم الطي، ويُغيَّر مفتاح التجميع من شريط الأدوات. ونُبقي
+        <b>صف رؤوس أعمدة واحدًا ثابتًا</b> بدل تكراره في كل مجموعة كما يفعل
+        ClickUp.
+      </li>
+      <li>
+        <b>الكثافة:</b> صف افتراضي ارتفاعه 36px، مع خيار مضغوط 32px، بخطوط أفقية
+        فقط. وهذا متوافق مع <code>rowPad</code> الموجود.
+      </li>
+      <li>
+        <b>التمرير فوق الصف:</b> تظهر الأدوات فورًا، لكن بخلفية أوضح من خلفية
+        ClickUp، مثل <code>--hover</code> الموجود عندنا، لكي تُرى في الوضعين
+        الفاتح والداكن.
+      </li>
+      <li>
+        <b>ميزانية الحركة:</b> القوائم المنبثقة أقل من 100ms، والنافذة نحو
+        150ms، والإغلاق فوري. وهذا يؤكد معيار الحركة المقترح في القسم 7.
+      </li>
+      <li>
+        <b>التحرير المباشر والإجراءات الجماعية:</b> لم يظهرا في المقطع، فنبقى
+        على التوصية السابقة. الحقول الخاضعة لبوابات المراحل تفتح الدرج الجانبي
+        وتظهر بقفل عند التمرير، والإجراءات الجماعية لا تشمل أي إجراء يمس
+        البوابات.
+      </li>
+    </ul>
+  </section>
+
+  <section id="s14">
+    <div class="eyebrow">14 · ملحق قياسات: التخصيص والبحث والأعمدة</div>
+    <h2>لوحة التخصيص، و«وضعي»، والبحث الشامل، وقوائم الأعمدة</h2>
+    <p>
+      المصدر أربعة مقاطع إضافية سجّلها المالك. القياسات بالبكسل CSS، والألوان
+      متوسطات من فيديو مضغوط، فقد تنحرف بنحو ±5.
+    </p>
+    <div class="grid2">
+      
+      
+      
+      
+    </div>
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>العنصر</th>
+            <th>المرصود</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>لوحة التخصيص</td>
+            <td>
+              لوحة جانبية بعرض نحو 285px وبطول الشاشة. خياراتها: حفظ تلقائي،
+              وتثبيت، وخاص، وحماية العرض، وتحميل سريع. تظهر فورًا (إطار واحد)
+            </td>
+          </tr>
+          <tr>
+            <td>«وضعي»</td>
+            <td>
+              نافذة منبثقة بعرض نحو 255px، تختار فيها النطاق: «هذا العرض فقط» أو
+              «كل العروض»، مع خيار «حفظ للجميع»
+            </td>
+          </tr>
+          <tr>
+            <td>البحث الشامل (Ctrl+K)</td>
+            <td>
+              تبويبات للمصادر، وشرائح لنوع العنصر، وفلتر وفرز، وعمود يبيّن مدى
+              حداثة كل نتيجة (مثل «16m»)، وأزرار فتح ونسخ رابط في كل صف. يظهر
+              فورًا
+            </td>
+          </tr>
+          <tr>
+            <td>قائمة رأس العمود</td>
+            <td>
+              عرض نحو 225px: فرز، وفرز العمود كله، وتجميع، ونقل، وإخفاء، وأتمتة
+            </td>
+          </tr>
+          <tr>
+            <td>منتقي طرق العرض</td>
+            <td>
+              شبكة من عمودين لأنواع العرض، مع خياري «خاص» و«تثبيت» عند الإنشاء
+            </td>
+          </tr>
+          <tr>
+            <td>شارات الحالة النشطة</td>
+            <td>
+              «1 Filter» و«↑2» تبقى ظاهرة دائمًا لتخبر المستخدم أن العرض مفلتر
+              أو مرتب
+            </td>
+          </tr>
+          <tr>
+            <td>النوافذ المهمة</td>
+            <td>
+              تظهر خلال نحو 185ms بتلاشٍ وتعتيم خلفي نحو 60%. والانتقال إلى صفحة
+              المهمة الكاملة نحو 170ms
+            </td>
+          </tr>
+          <tr>
+            <td>قائمة «...» للقائمة</td>
+            <td>
+              الحقول المخصصة، وحالات المهام، والاستيراد، والقوالب، والنقل،
+              والأرشفة، والمشاركة والصلاحيات
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>ما نعتمده لـ PMIS</h3>
+    <ul>
+      <li>
+        <b>الحقول العادية والحقول المقفلة في الصف:</b> المنطقة ونوع الموقع
+        والمقاول تظهر شرائح قابلة للتحرير داخل الصف. أما المحطة والحالة فتظهر
+        للقراءة فقط مع قفل، ولا تتغير إلا عبر نافذة البوابة.
+      </li>
+      <li>
+        <b>شارات «مفلتر» و«مرتب»:</b> نضيفها إلى
+        <code>ActiveChips</code> الموجود، لكي يعرف مهندس الميدان دائمًا أن ما
+        يراه جزء من البيانات لا كلها.
+      </li>
+      <li>
+        <b>نطاق حفظ العرض:</b> «هذا العرض فقط / كل العروض / حفظ للجميع»، وخيار
+        «حماية العرض» لعروض مكتب إدارة المشاريع المرجعية. يُبنى على SavedViews.
+      </li>
+      <li>
+        <b>«مواقعي اليوم»:</b> عرض بطابع «وضعي» لفرق الميدان في CW وTE، بحالة
+        فارغة واضحة ومخرج بنقرة واحدة.
+      </li>
+      <li>
+        <b>قائمة رأس العمود:</b> فرز، وإخفاء، ونقل. ولا تظهر خيارات الأتمتة على
+        أعمدة البوابات.
+      </li>
+      <li>
+        <b>البحث الشامل:</b> يؤكد نموذج القسم 6، أي تبويبات لنوع العنصر (مواقع،
+        وسجلات، ومستخدمون)، وعمود حداثة، وأزرار فتح ونسخ رابط.
+      </li>
+    </ul>
+    <p class="note">
+      <b>ما لم يظهر بعد في أي مقطع:</b> التحرير المباشر وهو يعمل (رأينا الشرائح
+      مغلقة فقط)، ومنشئ الفلاتر من الداخل، وتحديد الصفوف وشريط الإجراءات
+      الجماعية، وطيّ المجموعات، والإشعارات المؤقتة (toasts) مع التراجع، وصفحات
+      الأشخاص والأدوار والأمان. هذه البنود ما زالت قائمة على التوثيق.
+    </p>
+  </section>
+
+  <section id="s15">
+    <div class="eyebrow">15 · مواصفة الاستنساخ (Replica)</div>
+    <h2>مواصفة الاستنساخ وملف الرموز وترتيب البناء</h2>
+    <p>
+      أُعدّت هذه المواصفة بمهارتَي <code>replica-recon</code> و<code
+        >replica-design</code
+      >
+      من القياسات والإعدادات واللقطات أعلاه. جزء الاستطلاع الحي في Replica لم
+      يعمل، لأنه يحتاج جلسة ClickUp مسجّلة الدخول. والمواصفة تضم 24 عنصرًا، لكل
+      عنصر: البنية، والمقاسات بالبكسل CSS، والحالات، والحركة، والتكييف مع بوابات
+      المراحل، والمكوّن الموجود الذي يُبنى عليه، ومعيار القبول.
+    </p>
+    <ul>
+      <li>
+        <a href="clone-spec.md">clone-spec.md</a>: المواصفة الكاملة لكل شاشة
+        ومكوّن، مع قائمة ميزات ClickUp المستبعدة وسبب استبعادها.
+      </li>
+      <li>
+        <a href="tokens.clone.css">tokens.clone.css</a>: الرموز بنسختين قابلتين
+        للتبديل. نسخة <b>pmis</b> تركوازية، ونسخة <b>neutral</b> مطابقة لما
+        قسناه من ClickUp، ولكل منهما وضع فاتح وآخر داكن. نجح فحص التباين في 208
+        زوجًا من الألوان دون أي إخفاق وفق معيار WCAG AA.
+      </li>
+      <li>
+        <a href="build-order.md">build-order.md</a>: توزيع العناصر على المراحل
+        الثماني، مع التبعيات وتبرير كل مكتبة.
+      </li>
+    </ul>
+    <p class="note">
+      <b>عُثر أثناء الإعداد على مشكلتين في الكود الحالي:</b> شارة الجرس في الوضع
+      الداكن تباينها 3.3:1 (<code>Shell.tsx:182</code>)، ونص
+      <code>--mute</code> على <code>--hover</code> تباينه 4.1:1، وكلاهما أقل من
+      الحد المطلوب 4.5:1. الرموز الجديدة <code>--lateOn</code> و<code
+        >--rowHover</code
+      >
+      تعالجهما.
+    </p>
+    <h3>قرارات مفتوحة على المالك قبل التنفيذ</h3>
+    <ul>
+      <li>
+        <b>التحقق المسبق من البوابة:</b> هل توجد نقطة اتصال (API) تعيد للموقع
+        المحطات التالية المسموح بها وما يمنع الانتقال إليها؟ التحقق أثناء السحب
+        في اللوحة يعتمد عليها.
+      </li>
+      <li>
+        <b>تخطي المحطات:</b> هل يجوز تخطي عدة محطات في إجراء واحد إذا اكتملت
+        شروط البوابات كلها، أم يُمنع دائمًا؟
+      </li>
+      <li>
+        <b>حفظ طرق العرض:</b> هل تستوعب واجهة حفظ العروض الحالية كائن العرض
+        الموحّد بصيغة JSON دون تغيير في المخطط؟
+      </li>
+      <li>
+        <b>الخط والنسخة الافتراضية:</b> أي خط عربي نعتمد، IBM Plex Sans Arabic
+        أم Cairo؟ وبأي النسختين تبدأ المؤسسة؟
+      </li>
+      <li>
+        <b>التحرير المباشر والفرز والبحث:</b> ما الحقول التي يجوز تحريرها مباشرة
+        في كل سجل؟ وهل يدعم الخادم الفرز والبحث في كل السجلات؟
+      </li>
+    </ul>
+  </section>
+
+  <section id="s16">
+    <div class="eyebrow">16 · خطة التنفيذ على scupecenter/PMIS</div>
+    <h2>خطة التنفيذ المتكاملة</h2>
+    <p>
+      الخطة الكاملة في ملف <a href="PLAN.md">PLAN.md</a>، وتشمل: استراتيجية
+      المستودع، والحوكمة، وتنظيم العملاء، والمراحل من 0 إلى 8، والأدوات،
+      والضوابط، والجدول الزمني، وأعمال الأسبوع الأول.
+    </p>
+    <p><b>القرارات المعتمدة:</b></p>
+    <ul>
+      <li>Cairo للعربية، وInter للنص اللاتيني.</li>
+      <li>
+        الهوية المحايدة المطابقة لـ ClickUp افتراضيًا، مع إمكان التبديل إلى هوية
+        PMIS.
+      </li>
+      <li>
+        تخطي المحطات مسموح بعد اجتياز قائمة تحقق البوابات، ويُسجَّل الانتقال
+        محطة محطة.
+      </li>
+      <li>البيئة التجريبية في ClickUp تبقى مرجعًا حتى نهاية المشروع.</li>
+    </ul>
+  </section>
+</div>

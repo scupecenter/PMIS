@@ -1,0 +1,82 @@
+-- Deployment step (not a migration): table rights of the application role. Run as the migration role or a superuser
+-- after every `migrate deploy`. Blanket grants first, then the narrowing that 001, 008 and 009 require.
+GRANT USAGE ON SCHEMA public TO pmis_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO pmis_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO pmis_app;
+
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM pmis_app;      -- 001: append-only
+SELECT idm_revoke_app_writes('pmis_app');                         -- 008: identity tables only through idm_*
+REVOKE ALL ON local_credentials FROM pmis_app;                    -- 009: password hashes only through auth_local_*
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON user_sessions FROM pmis_app;  -- 013: created only by auth_session_create, never deleted
+GRANT UPDATE (last_activity_at, stepup_at, current_screen, revoked_at, revoked_by, revoke_reason) ON user_sessions TO pmis_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON departments, message_threads, message_participants, messages, announcements,
+  announcement_targets, announcement_recipients, announcement_responses FROM pmis_app;  -- 010: only through idm_*, msg_*, ann_*
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON task_instances, workflow_steps, comments, task_level_actors, task_level_voters, comment_mentions FROM pmis_app;  -- 014: the approval engine writes only through wf_* functions
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON register_records, register_steps, register_level_actors, register_level_voters, register_definitions, register_fields, register_task_sources, procurement_records, powerco_records, hpc_records, permit_records FROM pmis_app;  -- 0019: register records and their approved projections only through reg_* functions
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON holidays, work_calendars, sla_rules, sla_rule_sets, sla_rule_set_items, permit_types FROM pmis_app;  -- 0017: calendar and SLA configuration only through admin_save_holiday, admin_delete_holiday, admin_save_weekend_days and the admin_*_sla_rule_set functions (audited, with a reason)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON site_gate_state FROM pmis_app;  -- 0018: written only by calc_gate_watch (the calculation layer, owner pmis_definer)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON matrix_cells, matrix_cell_assignees, matrix_state FROM pmis_app;  -- 0020: the Responsibility Matrix is written only through matrix_save (audited, with a reason, If-Match)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON wh_movements, wh_movement_lines, warehouse_item_need_rules, warehouse_items, warehouse_serials, warehouse_site_qty, as_built_items FROM pmis_app;  -- 0026, 0027: warehouse and As-Built items only through admin_save_* and wh_* / reg_* functions
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON notifications FROM pmis_app;  -- 0031: rows are created only by the definer functions; the owner of a row changes only read_at and snoozed_until (RLS limits them to their own rows)
+GRANT UPDATE (read_at, snoozed_until) ON notifications TO pmis_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON watches, status_updates FROM pmis_app;  -- 0031: only through x_follow, x_unfollow, x_status_post and x_status_edit
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON template_definitions, template_versions, import_batches, import_batch_rows FROM pmis_app;  -- 0037: templates, versions, batches and rows are written only by tpl_sync*, imp_stage_batch, imp_submit_batch and imp_decide_batch
+REVOKE ALL ON user_totp, user_recovery_codes, auth_pending FROM pmis_app;  -- 0033: encrypted TOTP secrets, recovery-code hashes and pending sign-ins only through auth_totp_*, auth_pending_* and idm_*_two_factor
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON weight_sets, weight_activities, weight_items, progress_snapshots, site_snapshots FROM pmis_app;  -- 0039: weights only through admin_save_weight_set / admin_publish_weight_set, snapshots only through dash_snapshot_take (never rewritten)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON document_types, document_type_placements, document_slots, document_files, document_type_versions, document_type_drafts, document_blank_forms, document_export_jobs, document_task_snapshots FROM pmis_app;  -- 0038: the Document Library, slots, files and zip jobs only through admin_save_document_type, admin_publish_document_type, doc_attach_file, doc_withdraw_file, doc_add_slot, doc_blank_form_attach, doc_job_* (audited)
+REVOKE ALL ON document_task_snapshots FROM pmis_app;  -- 0038: internal bookkeeping of the slot snapshot
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON audit_log, system_log FROM pmis_app;  -- 0045: no log is written by pmis_app; audit rows of the API go through log_audit_write, the System Log through log_system_write
+REVOKE ALL ON audit_field_changes, audit_log_chain, security_log, security_log_chain, log_chain_heads, job_runs, deployments, security_alerts, security_alert_state FROM pmis_app;  -- 0045: read only through log_*_read / sec_*_read (B4 scope, view_security_log); written only by the triggers, sec_log_write, job_run_*, sec_alert_* and log_deployment
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON team_scope_match_meta, team_scope_match_scopes, team_scope_match FROM pmis_app;  -- 0043: the team / scope match of Procurement (Q97) only through admin_save_team_scope_match (admin.settings edit, reason, If-Match, audited)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON snags, snag_photos, snag_types FROM pmis_app;  -- 0047: QC snags, their photos and the snag types only through qc_raise_snag, qc_save_snag, qc_attach_photo, qc_withdraw_photo, qc_transition_snag and admin_save_snag_type (audited)
+REVOKE ALL ON document_record_snapshots FROM pmis_app;  -- 0047: internal bookkeeping of the slot snapshot of a register record (record slots only through doc_attach_file, doc_withdraw_file, doc_add_record_slot, doc_record_reject)
+REVOKE ALL ON email_change_requests FROM pmis_app;  -- 0044: email change requests (self-service profile) only through idm_request_email_change, idm_cancel_email_change, idm_decide_email_change, idm_my_email_changes and idm_email_change_list
+REVOKE ALL ON stored_object_meta FROM pmis_app;  -- 0048: envelopes and scan state of stored objects only through the storage_* functions (owner pmis_definer); the API never reads or writes the table
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ps_manual_values, task_delay_periods, dash_snapshot_runs FROM pmis_app;  -- 0046: manual Project Status values only through ps_manual_set, delay periods only through delay_period_add / delay_period_void, snapshot runs only through dash_snapshot_scheduled
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON master_columns, template_task_fields, template_task_rules, template_parts FROM pmis_app;  -- 0049: the Master sheet columns, the task fields of the stream templates, their rules and the TPL-MASTER sheet names are configuration (admin only, through the admin screens); the API only reads them
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON scenario_task_rules, scenario_rule_state, site_scope_exceptions, sla_master_columns, site_gate_events FROM pmis_app;  -- 0052 (P1): scenario applicability rules, scope exceptions, the SLA sheet column map and the gate history only through admin_save_scenario_rules, admin_save_scope_exception, admin_revoke_scope_exception and calc_gate_watch (owner pmis_definer, audited)
+REVOKE ALL ON SEQUENCE site_gate_events_id_seq FROM pmis_app;  -- 0052 (P1): the gate history is written only by calc_gate_watch
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON doc_sequences, doc_sequence_counters, doc_number_issues, warehouse_region_vendors FROM pmis_app;  -- 0053 (P7): numbering sequences, their counters, issued numbers and the region WL vendor only through admin_save_doc_sequence, doc_next_number (via wh_create_movement) and admin_save_region_vendor (audited, with a reason)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON levels_conversions FROM pmis_app;  -- 0054: the conversion record of the two-level change (Q215-Q217) is written only by levels_convert_two, levels_conversion_notify and levels_hold_guard; the API reads it for the "previous path" label
+REVOKE ALL ON mail_outbox, log_integrity_runs FROM pmis_app;  -- 0055 (P9): the mail queue only through mail_send_to_user, mail_send_to_address, mail_claim, mail_mark, mail_outbox_read, mail_stats, mail_test_enqueue, mail_retry and mail_purge; the integrity runs only through log_integrity_start, _step, _finish, _set_anchor, _fail and log_integrity_runs_read. roles stays read-only for pmis_app (capabilities only through idm_role_set_capabilities)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON snag_severities, snag_level_voters FROM pmis_app;  -- 0056 (P6): the snag severity catalogue only through admin_save_snag_severities, the all-members votes of a snag's L2 only through qc_transition_snag; the documents and QC settings only through admin_save_documents_qc (audited)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON snag_severities, snag_level_voters FROM pmis_app;  -- 0056 (P6): the snag severity catalogue only through admin_save_snag_severities, the all-members votes of a snag L2 only through qc_transition_snag; the documents and QC settings only through admin_save_documents_qc (audited)
+-- P5 (migration 0057, Q104): the list catalogue is written only through admin_save_list_catalogue and admin_save_list_value (fields.edit for all regions, a reason, If-Match, audited)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON list_catalogues, list_values FROM pmis_app;
+-- P8 (0058): identity and profile
+REVOKE ALL ON phone_change_requests FROM pmis_app;  -- 0058: phone change requests (D156) only through idm_request_phone_change, idm_cancel_phone_change, idm_decide_phone_change, idm_my_phone_changes and idm_phone_change_list
+REVOKE ALL ON email_change_requests FROM pmis_app;  -- 0058: still no right; the address check (Q158) only through idm_email_change_set_verification and idm_email_change_verify
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ps_manual_plans FROM pmis_app;  -- 0059: the plans of the manual Project Status items only through ps_manual_plan_set (append-only, versioned); delay periods are proposed and decided only through delay_period_propose / delay_period_decide
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON region_aliases, role_aliases, master_reconciliation_runs, master_reconciliation_rows, master_reconciliation_diffs FROM pmis_app;  -- 0060: the import aliases (Q8, Q10) only through imp_alias_save, the legacy Master import runs, their rows and the comparison report (Q1, Q211) only through mi_stage_run, mi_apply_run and mi_resolve_diff
+-- 0061 (P4b, Q110 and Q142 to Q147, D145b): the specialization catalogue, the allowed groups, the team specializations, the party contracts, the type map and the contractor rules
+-- only through admin_save_team_scope_match, admin_save_contractor_rules and the approval of a Contractors record (audited); the submit checks and the sent alerts are internal.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON team_specializations, team_scope_match_groups, external_team_specializations, external_party_contracts, external_party_type_map, contractor_rules FROM pmis_app;
+REVOKE ALL ON team_scope_checks, contractor_alerts_sent FROM pmis_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON external_parties, external_teams FROM pmis_app;  -- 0061 (Q110): parties and teams are the projection of approved Contractors records only (the API never wrote them)
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON change_requests, rf_design_records, acquisition_candidates, readiness_handover, as_built_records, issues, risks, as_built_type_sources FROM pmis_app;  -- 0062: the typed projections of Change Control, RF & Design, Acquisition, Readiness & Handover, As-Built, Issues and Risks are written only by the approval feeds (p4a_feed_*, owner pmis_definer); the item-type sources of As-Built are configuration
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON hpc_pr_links, hpc_legacy_migrations FROM pmis_app;  -- 0063: the HPC record <-> purchase request links (Q150) only through hpc_set_pr_links (and the new-version copy), the legacy HPC migration links (Q139) only through hpc_legacy_to_drafts
+-- 0065 (P10): saved views and drafts only through sv_save, sv_set_active, sv_transfer, sv_import, dr_save and dr_discard (audited); pmis_app reads
+-- its own rows only (row security), the shared views of others only through sv_list / sv_get, with hidden columns stripped
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON saved_views, saved_view_targets, saved_view_versions, user_drafts FROM pmis_app;
+
+-- 0069 (P1-DB-03): the session context keys are readable by pmis_definer only; pmis_app only calls app_begin (the signed session context)
+REVOKE ALL ON pmis_context_keys FROM pmis_app;
+
+-- 0070 (G1, Q460): a site is created only by site_create_apply when L2 approves (owner pmis_definer). pmis_app can no longer insert, delete or truncate sites, or write the
+-- drafts that hold the proposals (site_draft_*, imp_*_site_batch), or the accepted Master header aliases (G2).
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON site_drafts, master_header_aliases FROM pmis_app;
+REVOKE INSERT, DELETE, TRUNCATE ON sites FROM pmis_app;
+
+-- 0071 (Q473): the identity of a site changes only through an approved Change Control proposal (p4a_apply_site_change, owner pmis_definer) and is set at creation by
+-- site_create_apply. pmis_app keeps the update right on the other columns of sites (the column list is built from the table, so a column added later is not granted by
+-- accident), and loses it on the identity: site_code, name, name_ar, region_id, cluster_id, latitude, longitude.
+DO $$
+DECLARE cols text;
+BEGIN
+  REVOKE UPDATE ON sites FROM pmis_app;
+  SELECT string_agg(format('%I', a.attname), ', ' ORDER BY a.attnum) INTO cols
+  FROM pg_attribute a WHERE a.attrelid = 'public.sites'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+    AND a.attname NOT IN ('id', 'site_code', 'name', 'name_ar', 'region_id', 'cluster_id', 'latitude', 'longitude');
+  EXECUTE format('GRANT UPDATE (%s) ON sites TO pmis_app', cols);
+END $$;
+REVOKE ALL ON import_batch_jobs FROM pmis_app;  -- 0074 / 0075: the background runs of a big batch (New sites, register, stream, Master apply) only through imp_async_start, imp_async_step, imp_async_chunk_tasks, imp_async_pending, imp_async_abandon and imp_batch_job_json (owner pmis_definer)

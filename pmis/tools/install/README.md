@@ -1,0 +1,161 @@
+# PMIS Workspace installer (Ubuntu)
+
+`install-ubuntu.sh` installs or upgrades PMIS Workspace on an Ubuntu 22.04 or 24.04 server. `update.sh` pulls the code and
+runs the installer again with every answer taken from the last run. Answers are kept in `/etc/pmis-pmis/install.conf`
+(no secrets).
+
+    sudo bash pmis/tools/install/install-ubuntu.sh   # first time, or to change an answer
+    sudo bash pmis/tools/install/update.sh           # later updates, no questions
+
+## HTTPS certificate (step 2 of 6)
+
+The first question of the certificate step is the menu. Options 0 to 3 keep their numbers.
+
+| Option | Meaning | Certificate files used by nginx |
+|---|---|---|
+| 0 | Keep the current certificate (only offered when one is already in use) | the files nginx uses now |
+| 1 | Let's Encrypt: issue a new certificate (needs a public domain, port 80 reachable) | `/etc/letsencrypt/live/<name>/` (certbot webroot) |
+| 2 | Your own certificate files (for example from your internal CA) | copied to `/etc/ssl/pmis-pmis/` |
+| 3 | Self-signed | `/etc/ssl/pmis-pmis/` |
+| 4 | A Let's Encrypt certificate already on this server, used in place | `/etc/letsencrypt/live/<name>/` (read where certbot keeps it, not copied) |
+
+Use option 4 when another certificate on the server is renewed by certbot and PMIS Workspace must follow its renewals.
+Option 2 copies the files, so a renewal never reaches PMIS Workspace.
+
+### Option 4
+
+1. The installer lists the names under `/etc/letsencrypt/live/` (`README` is ignored). Choose a number from the list or type a name.
+2. It checks the certificate: `fullchain.pem` and `privkey.pem` exist, the private key matches, the certificate is not
+   expired (`openssl x509 -checkend 0`), and it covers the server name. It shows the subject, the SAN and the expiry date.
+   Nothing is changed if a check fails.
+3. The server name (nginx `server_name`) defaults to the certificate name. Type another name only if the certificate covers it.
+4. The renewal hook is installed so certbot reloads nginx after each renewal: `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx`
+   (content: `#!/bin/sh` and `systemctl reload nginx`). It is idempotent. If that name already holds another hook, the installer
+   writes `reload-nginx-pmis-pmis` beside it and never overwrites a hook with other content. If both names are taken, it stops
+   and asks you to add the reload line yourself.
+5. The new nginx site is tested with `nginx -t` before nginx is reloaded. If the test fails, the previous site file is put back
+   and nginx is not reloaded.
+
+The choice is saved in `install.conf` (`PREV_TLS_MODE=le-existing`, `PREV_LE_NAME=<name>`). `update.sh` and a re-run keep it,
+and option 0 keeps working with it. A site that already points into `/etc/letsencrypt/live/<name>/` is recognised as option 4
+even before `install.conf` exists.
+
+### Unattended run (option 4 or any other option)
+
+Only the certificate question is skipped. Every other question is still asked.
+
+    sudo env TLS_MODE=le-existing TLS_LE_NAME=pmis.example.com bash pmis/tools/install/install-ubuntu.sh
+
+`TLS_MODE` takes `0` to `4` or `le-existing`. `TLS_LE_NAME` is required for option 4. For `update.sh` the saved answers are used.
+
+## Database backup (pgBackRest, optional, Q196)
+
+- `install-db-backup.sh` (asked at the end of `install-ubuntu.sh`, or run on its own): installs pgbackrest, writes `/etc/pgbackrest/`
+  (repositories, encrypted with one key per repository; the keys are created once and never regenerated), turns on WAL archiving
+  (`archive_timeout` 5 minutes) with a PostgreSQL restart, creates the stanza `pmis-pmis`, and installs the timers: nightly full backup at 02:00,
+  a check every 15 minutes (System Log alert when a backup or the WAL archive is late), and, when configured, a pg_dump copy at 03:00,
+  a weekly copy and a monthly copy.
+- Repository 2 in another building is an answer to the installer (`sftp:` or `s3:`). The owner's names, destinations and key custody are a
+  checklist in `infra/RUNBOOK.md` section 8.8, not decided by the installer.
+- Each run writes job_runs rows (`db_basebackup`, `db_dump`). Restore: `infra/backup/db-restore.sh` (point in time, scratch cluster only).
+
+    sudo bash pmis/tools/install/install-db-backup.sh
+
+## Tests
+
+`test-le-existing.sh` runs the option 4 helpers against a fake `/etc/letsencrypt` tree made in a temporary directory:
+valid, expired, mismatched key, empty directory, IP certificate, path-traversal name, the choice (interactive, unattended,
+update) and the renewal hook (created, idempotent, foreign hooks left alone). It needs only `openssl`:
+
+    bash pmis/tools/install/test-le-existing.sh
+
+CI checks the scripts with `bash -n` and `shellcheck --severity=error` ("Installer scripts (syntax and shellcheck)").
+
+## Stored files: encryption, virus scan and backup (ADR 0008, Q134)
+
+- `FILE_ENC_KEY` (the master key of the encrypted stored files) is generated on the first run and kept on every update, like `TOTP_ENC_KEY`.
+  Keep a copy offline: without it the stored files cannot be read.
+- **ClamAV virus scan** (on by default since owner answer Q195: installed without a question; `PMIS_VIRUS_SCAN=off` on the command line, or `MALWARE_SCAN=off` in `pmis.env`, skips it; `install-clamav.sh` can also be run alone): installs `clamav-daemon` and
+  `clamav-freshclam`, sets `MALWARE_SCAN=clamd` and `SCAN_FAILURE=fail_closed` in `pmis.env`, and makes the API start after clamd.
+- **Backup of the stored files** (optional; `install-file-backup.sh`): installs restic, asks for the repository (another building: an absolute
+  path on another disk, or `sftp:`), creates the repository password file once, and installs the nightly timer `pmis-pmis-files-backup` at 02:30
+  (retention 14 daily, 8 weekly, 12 monthly).
+
+The steps and the commands of the owner after an update are in `infra/RUNBOOK.md` (sections 2 to 6).
+
+## Session context key (migration 0069, ADR 0003 section 6, P1-DB-03)
+
+- `PMIS_CONTEXT_KEY` (32 random bytes as 64 hex characters) is generated on the first run, written to `/etc/pmis-pmis/pmis.env` (readable by root and the
+  service user only) and **loaded into the database** (`pmis_context_keys`, readable only by `pmis_definer`) with `app_ctx_key_install`. The API signs the
+  context of every transaction with it; the database verifies the signature, so SQL that runs as `pmis_app` without the key cannot name another user,
+  widen its regions or claim a step-up.
+- **An update keeps the key** and loads it again (the call is idempotent, so a database restored from a backup gets it back). The installer never prints
+  it and never writes it to a log; it reaches `psql` on standard input only.
+- Without the key in `pmis.env` the API refuses to start. If the table is empty (a restore from a backup that predates the key), run the installer again.
+- Rotation is in `infra/RUNBOOK.md` section 9. Keep an offline copy of `pmis.env` like the other keys.
+
+## Outbound mail and the integrity anchors (migration 0055, Q167, Q171)
+
+PMIS Workspace mails the security alerts to every active System Admin (and, later, the notification kinds listed in the setting `mail.notification_kinds`).
+The SMTP settings live only in `/etc/pmis-pmis/pmis.env`. A first install writes them empty; **every update keeps them as they are**. With
+`SMTP_HOST` empty, mail is off: nothing leaves the server and the System Log records what would have been sent (kind, masked address, subject;
+never the body).
+
+| Setting | Meaning | Example |
+|---|---|---|
+| `SMTP_HOST` | The internal relay (empty = mail off) | `smtp.example.local` |
+| `SMTP_PORT` | 587 for STARTTLS, 465 for implicit TLS, 25 for a relay without TLS | `587` |
+| `SMTP_TLS` | `starttls` (required: a relay that does not offer it is refused, never downgraded), `tls` (port 465) or `none` | `starttls` |
+| `SMTP_USER`, `SMTP_PASS` | The account the relay wants, both or neither. Never logged, never shown on screen | `pmis-relay` |
+| `SMTP_FROM` | The sender, an address or `Name <address>` | `PMIS Workspace <pmis-noreply@example.com>` |
+| `SMTP_TLS_REJECT_UNAUTHORIZED` | `true` (default) checks the relay certificate; `false` only for a test relay | `true` |
+| `SMTP_CA_FILE` | The internal CA certificate when the relay uses one (readable by the service user) | `/etc/pmis-pmis/relay-ca.pem` |
+| `SMTP_ALLOW_PLAIN_AUTH` | `true` allows a password over `SMTP_TLS=none` (a relay on the same host only) | (empty) |
+| `SMTP_TIMEOUT_MS`, `SMTP_HELO_NAME` | Optional: time-out per step (15000) and the EHLO name | `pmis.example.local` |
+| `APP_BASE_URL` | Base of the links in mails; empty = `APP_URL` | `https://pmis.example.local` |
+| `LOG_ANCHOR_DIR` | Where the nightly integrity check appends the chain heads (written by the installer: `/var/lib/pmis-pmis/log-anchors`) | |
+
+After filling them: `sudo systemctl restart pmis-pmis-api`, then **Logs → Mail delivery → Send a test mail to me**. The channel reads
+"Verified" only after a test mail went out with the current settings. A failed mail is retried after 1, 5, 15, 60 and 240 minutes (setting
+`mail.retry_minutes`), then given up; the System Admins are told in-app and `GET /api/v1/health` reports `mail: failing` for an external monitor.
+
+The files in `LOG_ANCHOR_DIR` are the reference that shows a rewrite of the whole Audit Log or security log chain by someone with database
+superuser rights (technical decision Q257, 2026-11-04). They are kept in two places the database cannot rewrite:
+
+- **The nightly file backup copies `LOG_ANCHOR_DIR`** in the same snapshot as the stored files (`infra/backup/files-backup.sh`, run by
+  `pmis-pmis-files-backup.timer` after `install-file-backup.sh`). **Without the file backup nothing copies them off the server**: install it
+  (it is optional at install time) or copy the directory yourself every night.
+- **Every finished integrity check mails the chain head hash** to the System Admins (the P9 mail outbox, a mandatory system mail, outbox kind
+  `integrity_head`; two mails a night per admin, one per chain). Keep these mails: the hash in the mail is the last line of the anchor file for
+  that run.
+
+The mail bodies in the outbox are kept 30 days (`mail.retention_days`, default 30 since migration 0067; it was 90). A value saved by a person is not changed.
+
+### Mail kinds at go-live (`mail.notification_kinds`, Q250)
+
+Security alerts are mailed to the System Admins by their own rule. Every other notification is in-app only while the setting
+`mail.notification_kinds` is empty, which is the development default and stays so. **At go-live** set it to the kinds that ask a person to act:
+an approval waiting for them, and an item returned to them with a note. These are the codes the system writes today:
+
+| Kind | What the person is asked |
+|---|---|
+| `task_assigned` | A task is waiting for your approval (L2), or is ready for you to start |
+| `register_assigned` | A register record waits for you (the next level opened) |
+| `snag_review` | Photos of a snag fix wait for your approval (L2) |
+| `task_rejected` | A task was returned to you with a note |
+| `register_rejected` | A register record was returned to you with a note |
+| `snag_rejected` | A snag fix was returned to you with a note |
+
+Everything else stays in-app (`no_eligible_holder`, `mention`, `followed_change`, `levels_converted`, `permit_transferred`, `snag_raised`, `snag_closed`,
+and so on). `task_returned` and `approval_due` are in the contract's list of kinds but nothing writes them yet; add them only when a later release does.
+**Set it in the screen (since contract 0.14.2, migration 0072, Q441):** a System Admin opens Settings, Mail kinds, presses "Add the six recommended kinds", saves with a reason
+and a fresh password check. The change is audited (`mail_notification_kinds_update`). The list offers only the kinds the system writes, and refuses the kinds reserved for
+security (`security_*`, `integrity_*`, `audit_integrity_*`, `break_glass_*`, `retention_*`). A direct update of the setting is refused by the database for everybody but the
+database owner, so the SQL below is the fallback for a server whose application is not yet running:
+
+```bash
+sudo -u postgres psql pmis -c "UPDATE settings SET value = '[\"task_assigned\", \"register_assigned\", \"snag_review\", \"task_rejected\", \"register_rejected\", \"snag_rejected\"]'::jsonb, updated_at = now() WHERE key = 'mail.notification_kinds';"
+```
+
+The mails need SMTP (above); with `SMTP_HOST` empty they are only logged. The recipient limit per hour (`mail.cap_per_recipient_per_hour`, 30) still applies
+to these kinds, so a person with many waiting items gets the first 30 mails in an hour and the rest stay in-app.

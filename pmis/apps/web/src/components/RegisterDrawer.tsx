@@ -1,0 +1,335 @@
+import * as Dialog from '@radix-ui/react-dialog';
+import { AlertTriangle, ArrowRightLeft, Ban, Check, FilePlus2, HandMetal, Save, Undo2, UserMinus, X, Clock, Link2 } from 'lucide-react';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
+import { useSession } from '@/api/hooks';
+import { useCancelSnagRecord, useCreateRecord, useNewVersion, useRecordClaim, useRecordHistory, useRecordOp, useRecordTransfer, useRegisterRecord, useUpdateRecord, type RecordOp } from '@/api/registers';
+import { useMatrix } from '@/api/sites';
+import { useAddRegisterComment, useRegisterComments } from '@/api/x';
+import type { RegisterDefinition, RegisterRecord } from '@/api/types';
+import { registerErrorMessage, serverFieldIssues } from '@/lib/registerErrors';
+import { cellLevel } from '@/lib/matrixLevels';
+import { defaultsFor, forEntry, OWNER_NOTE, patchData, sectionsFor, validateRecord, visibleData, type FieldIssue } from '@/lib/registerForms';
+import { alphaToday } from '@/lib/today';
+import { FieldHistory } from './logs/FieldHistory';
+import { FieldInput, fieldLabel, issueText, showValue, SitePicker } from './RegisterFields';
+import { CommentsPanel } from './Comments';
+import { DrawerFrame, DrawerTabs, panelProps, useReportDirty } from './DrawerFrame';
+import { DraftBar, useDraft } from './DraftBar';
+import { FollowButton } from './FollowButton';
+import { RecordDocuments } from './RecordDocuments';
+import { DismantleOrderSelect, HpcPurchaseRequests } from './P4cPanels';
+import { useRecordSlots } from '@/api/documents';
+import { Holders } from './HolderChip';
+import { Balance, ExtendBooking, MembersEditor, ReadinessBadge, reservedMessage, TopUp, VehiclePicker } from './AssignmentPanels';
+import { LegacyConversion } from './LegacyConversion';
+import { RejectDialog } from './RejectDialog';
+import { useToast } from './Toast';
+
+export const STATE_TONE: Record<string, string> = { entry: 'bg-lockBg text-lockInk', in_review: 'bg-waitBg text-waitInk', in_approval: 'bg-openBg text-openInk', approved: 'bg-doneBg text-doneInk', voided: 'bg-lateBg text-lateInk' };
+type Data = Record<string, unknown>;
+type SiteSel = { id: string; code: string; region_id?: number } | null;
+
+/**
+ * Migration 0042: the HPC record is linked to the approved HPC purchase request of the site (a Procurement record of scope HPC, filled by the server), and a
+ * record entered before the move keeps its old request fields as a read-only block.
+ */
+function HpcPurchaseRequest({ record }: { record: RegisterRecord }) {
+  const { t } = useTranslation();
+  const d = record.data as Record<string, string | undefined>;
+  return (
+    <>
+      <section className="rounded-md bg-card2 p-3 text-sm" data-testid="reg-hpc-pr" aria-label={t('registers.hpc_pr_title')}>
+        <div className="mb-1 flex items-center gap-1 font-semibold"><Link2 size={14} />{t('registers.hpc_pr_title')}</div>
+        {d.procurement_record_id ? (
+          <>
+            <Link className="font-semibold underline" data-testid="reg-hpc-pr-link" to={`/registers/procurement?record=${d.procurement_record_id}`}>{t('registers.hpc_pr_link', { pr: d.pr_no ?? '' })}</Link>
+            <p className="text-mute" data-testid="reg-hpc-pr-approval">{d.hpc_approval_date ? t('registers.hpc_pr_approved', { date: d.hpc_approval_date }) : t('registers.hpc_pr_not_approved')}</p>
+          </>
+        ) : <p className="text-mute" data-testid="reg-hpc-pr-missing">{t('registers.hpc_pr_missing')}</p>}
+      </section>
+      {(d.request_no || d.request_date) && (
+        <section className="rounded-md border border-line p-3 text-sm" data-testid="reg-hpc-legacy" aria-label={t('registers.hpc_legacy_title')}>
+          <div className="font-semibold">{t('registers.hpc_legacy_title')}</div>
+          <p className="text-mute">{t('registers.hpc_legacy_body', { no: d.request_no ?? '—', date: d.request_date ?? '—' })}</p>
+        </section>
+      )}
+    </>
+  );
+}
+
+/** Ordering issues that do not block (Q96): shown to everyone, meant for the reviewer. */
+function Warnings({ record, labelOf }: { record: RegisterRecord; labelOf: (code: string) => string }) {
+  const { t } = useTranslation();
+  const list = record.warnings ?? [];
+  if (!list.length) return null;
+  return (
+    <section className="rounded-md bg-waitBg p-3 text-sm text-waitInk" data-testid="reg-warnings" aria-label={t('registers.warnings_title')}>
+      <div className="mb-1 flex items-center gap-1 font-semibold"><AlertTriangle size={14} />{t('registers.warnings_title')}</div>
+      <ul className="list-disc ps-5">
+        {list.map((w, i) => {
+          const field = w.path.replace(/^\/data\//, '');
+          // 0.12.11: `related_path` names the field a POWERCO date is compared with (Q151)
+          const other = w.related_path ? labelOf(w.related_path.replace(/^\/data\//, '')) : '';
+          return <li key={`${w.code}-${i}`} data-testid={`reg-warning-${w.code}`}>{t(`regWarnings.${w.code}`, { field: labelOf(field), other, defaultValue: w.message ?? w.code })}</li>;
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function Body({ def: rawDef, record, onCreated }: { def: RegisterDefinition; record: RegisterRecord | null; onCreated: (id: string) => void }) {
+  const { t, i18n } = useTranslation();
+  const toast = useToast();
+  const key = rawDef.register_key;
+  const lang = i18n.language;
+  const rk = key;
+  const session = useSession().data;
+  const matrix = useMatrix().data;
+  const create = useCreateRecord(key), update = useUpdateRecord(key), op = useRecordOp(key), cancelSnag = useCancelSnagRecord(), claim = useRecordClaim(key), newVersion = useNewVersion(key), transfer = useRecordTransfer(key);
+  const hist = useRecordHistory(key, record?.id ?? null);
+  const comments = useRegisterComments(key, record?.id ?? '', !!record?.region_id);
+  const addComment = useAddRegisterComment(key, record?.id ?? '');
+  // 0.12.5: a register with a file field reads the record's slots too (the slots of a record without a site come with Q228)
+  const hasFile = rawDef.fields.some((f) => f.type === 'file');
+  const recSlots = useRecordSlots(key, record && (record.site_id || hasFile) ? record.id : null);
+  const ctx = { refs: record?.refs, files: (recSlots.data?.items ?? []).flatMap((sl) => sl.files.filter((f) => !f.superseded_by).map((f) => ({ id: f.id, name: f.original_name }))) };
+  const docsMissing = record?.state === 'entry' ? (recSlots.data?.missing_for_submit ?? []) : [];
+  const [data, setData] = useState<Data>(record?.data ?? defaultsFor(rawDef.register_key, rawDef));
+  const [site, setSite] = useState<SiteSel>(record?.site_id ? { id: record.site_id, code: record.site_code ?? '', region_id: record.region_id as number | undefined } : null);
+  const [rtype, setRtype] = useState<string>(record?.record_type ?? '');
+  const [dirty, setDirty] = useState(false);
+  const [tried, setTried] = useState(false);
+  const [server, setServer] = useState<Record<string, FieldIssue>>({});
+  const [rejecting, setRejecting] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [tab, setTab] = useState('data');
+  useReportDirty(dirty);
+
+  const act = (a: string) => !!record?.allowed_actions?.includes(a as never);
+  const editable = !record || act('edit');
+  // Q115: unsaved input is a server-side draft of this user only (never a save, a submission or an input of a calculation)
+  const dr = useDraft(`record.${rawDef.register_key}.${record?.id ?? 'new'}`, { data, record_type: rtype }, dirty, editable);
+  // 0042: the form offers only the scopes the caller may enter (the HPC Fiber Team: scope HPC); a read-only view shows the record as it is
+  // 0.12.2 (Q222, D220b): the permit form offers only the permit types the caller may enter, and the streams they may choose for a purpose-based type
+  const def = editable ? forEntry(rawDef, data) : rawDef;
+  const issues = { ...validateRecord(def, data, site?.id ?? null, alphaToday()), ...server };
+  const issueList = Object.keys(issues);
+  const labelOf = (code: string) => { const f = def.fields.find((x) => x.code === code); return f ? fieldLabel(f, lang) : code; };
+  const sections = sectionsFor(def, data);
+  const set = (code: string, v: unknown) => { setData((d) => ({ ...d, [code]: v })); setDirty(true); setServer((s) => { const n = { ...s }; delete n[code]; return n; }); };
+  const fail = (e: unknown) => { setServer(serverFieldIssues(e)); const m = reservedMessage(t, e) ?? registerErrorMessage(t, e); if (m) toast(m, 'err'); };
+  const name = (i18n.language === 'ar' && def.name_ar) || def.name_en;
+
+  // B5 / B6 preview from the Matrix row: who holds the next levels as well.
+  const row = matrix?.stages.find((s) => s.code === key);
+  const me = session?.user?.employee_id;
+  const n = record?.levels_required ?? row?.approval_levels ?? def.approval_levels;
+  // position p of the path -> matrix cell: 1 entry, the last position is always cell 3 (approve), a 2-level path skips cell 2 (owner answer E1)
+  const holds = (p: number) => !!row?.cells.find((c) => c.level === cellLevel(p, n) && !c.task_code && !c.region_id)?.assignees.some((a) => a.kind === 'user' && a.employee_id === me);
+  const from = record && record.state !== 'entry' ? record.current_level ?? 2 : 1;
+  let next = from + 1;
+  while (me && next <= n && holds(next)) next += 1;
+  const finalSelf = !!me && holds(from) && next > n && n > 1 || (n === 1 && holds(1));
+  const skipTo = me && holds(from) && next > from + 1 && next <= n ? next : null;
+
+  const save = () => {
+    setTried(true);
+    if (!site && def.site_scoped) { setServer({ site_id: { code: 'site_required' } }); return; }
+    const body = visibleData(def, data);
+    if (!record) create.mutate({ site_id: site?.id, site_code: site?.code, region_id: site?.region_id, ...(rtype ? { record_type: rtype } : {}), data: body }, {
+      onSuccess: (r) => { dr.clear(); toast(t('registers.saved')); setDirty(false); onCreated(r.id); }, onError: fail,
+    });
+    else update.mutate({ record, patch: { data: patchData(def, record.data, data) } }, { onSuccess: () => { dr.clear(); toast(t('registers.saved')); setDirty(false); }, onError: fail });
+  };
+  const run = (o: RecordOp, r: RegisterRecord, note?: string) => op.mutate({ record: r, op: o, note }, {
+    onSuccess: () => { toast(t(o === 'void' ? 'registers.voided' : 'approvals.done')); setRejecting(false); setVoiding(false); },
+    onError: (e) => { setRejecting(false); setVoiding(false); fail(e); },
+  });
+  const submit = () => {
+    setTried(true);
+    if (issueList.length) return;
+    if (!record) {
+      create.mutate({ site_id: site?.id, site_code: site?.code, region_id: site?.region_id, ...(rtype ? { record_type: rtype } : {}), data: visibleData(def, data) }, {
+        // the drawer switches to the saved record only after the submit answered, so the buttons below keep their callbacks
+        onSuccess: (r) => op.mutate({ record: r, op: 'submit' }, { onSuccess: () => { toast(t('approvals.done')); onCreated(r.id); }, onError: (e) => { fail(e); onCreated(r.id); } }),
+        onError: fail,
+      });
+    } else if (dirty) update.mutate({ record, patch: { data: patchData(def, record.data, data) } }, { onSuccess: (r) => { setDirty(false); run('submit', r); }, onError: fail });
+    else run('submit', record);
+  };
+  const busy = create.isPending || update.isPending || op.isPending || cancelSnag.isPending || claim.isPending || newVersion.isPending || transfer.isPending;
+  const claimedBy = record?.ball_in_court?.claimed_by;
+  const mine = claimedBy?.id === session?.user?.id;
+  const canClaim = !!record && (act('review') || act('approve')) && !claimedBy && (record.ball_in_court?.holders.length ?? 0) > 1;
+  const src = record?.task ?? null; // Q43: the task this record is the source of (set by the server at the first submission)
+
+  return (
+    <div className="flex h-full flex-col" data-testid="register-drawer-body" data-state={record?.state ?? 'new'}>
+      <header className="flex items-start gap-2 border-b border-line p-4">
+        <div className="flex-1">
+          <Dialog.Title className="font-bold">{name} · {record ? <span className="mono">{record.site_code ?? '—'}</span> : t('registers.new')}{record?.record_type && <span className="chip ms-2 bg-card2">{record.record_type.toUpperCase()}</span>}</Dialog.Title>
+          <Dialog.Description className="mt-1 flex flex-wrap items-center gap-2 text-sm text-mute">
+            {record ? <><span className={`chip ${STATE_TONE[record.state]}`} data-testid="reg-state">{t(`regState.${record.state}`)}</span>{t('drawer.level', { level: record.current_level ?? 1, total: n })}</> : t('registers.new_hint')}
+          </Dialog.Description>
+        </div>
+        {record?.entity_id && <FollowButton target={{ kind: 'record', key, id: record.id }} entityId={record.entity_id} />}
+        <Dialog.Close asChild><button className="btn px-2" aria-label={t('common.close')} data-testid="reg-close"><X size={16} /></button></Dialog.Close>
+      </header>
+      {record && <DrawerTabs value={tab} onChange={setTab} tabs={[{ id: 'data', label: t('drawer.tab_data') }, { id: 'documents', label: t('docs.tab') }, { id: 'comments', label: t('drawer.comments') }, { id: 'history', label: t('drawer.history') }]} />}
+      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        <div {...panelProps('data', tab)} className="space-y-4">
+        {editable && <DraftBar draft={dr} onRestore={(v) => { if (v.data && typeof v.data === 'object') setData(v.data as Data); if (typeof v.record_type === 'string') setRtype(v.record_type); setDirty(true); }} />}
+        {OWNER_NOTE[key] && <p className="rounded-md bg-card2 p-3 text-sm" data-testid="reg-owner-note">{t(OWNER_NOTE[key])}</p>}
+        {src && record?.site_id && (
+          <p className="flex items-center gap-2 rounded-md bg-openBg p-3 text-sm text-openInk" data-testid="reg-source">
+            <Link2 size={14} />{t('registers.source_task')}{' '}
+            <Link className="font-semibold underline" data-testid="reg-source-link" to={`/sites/${record.site_id}?task=${src.id}`}>{src.task_code}</Link>
+          </p>
+        )}
+        {record && key === 'hpc' && <HpcPurchaseRequest record={record} />}
+        {record && key === 'hpc' && <HpcPurchaseRequests record={record} />}
+        {record && <Warnings record={record} labelOf={labelOf} />}
+        {record && act('transfer') && <p className="rounded-md bg-waitBg p-3 text-sm text-waitInk" data-testid="reg-transfer-note">{t('registers.transfer_note')}</p>}
+        {record && key === 'meetings' && <LegacyConversion record={record} canEdit={act('edit')} />}
+        {record?.last_return_note && record.state === 'entry' && <div className="rounded-md bg-lateBg p-3 text-sm text-lateInk" data-testid="reg-return-note">{t('approvals.returned_note', { note: record.last_return_note })}</div>}
+        {record && record.state !== 'entry' && record.state !== 'approved' && record.state !== 'voided' && (
+          <section aria-label={t('grid.ball')}>
+            <div className="mb-1 text-sm text-mute">{t('grid.ball')}</div>
+            <Holders holders={record.ball_in_court?.holders ?? []} />
+            {claimedBy && <p className="mt-1 text-sm text-openInk" data-testid="reg-claimed-by">{t('drawer.claimed_by', { name: claimedBy.display_name })}</p>}
+          </section>
+        )}
+        {record && (
+          <ol className="flex flex-wrap gap-2 text-sm" data-testid="reg-path">
+            {Array.from({ length: n }, (_, i) => i + 1).map((l) => {
+              const kind = l === 1 ? 'entry' : l === n ? 'approve' : 'review';
+              const st = record.state === 'approved' || l < (record.current_level ?? 1) || (l === 1 && record.state !== 'entry') ? 'done' : l === (record.current_level ?? 1) ? 'current' : 'pending';
+              return <li key={l} data-status={st} className={`chip ${st === 'current' ? 'bg-openBg text-openInk' : st === 'done' ? 'bg-doneBg text-doneInk' : 'bg-lockBg text-lockInk'}`}>{l}. {t(`level.${kind}`)}</li>;
+            })}
+          </ol>
+        )}
+
+        <form onSubmit={(e) => e.preventDefault()} className="space-y-5" noValidate>
+          {def.site_scoped && (
+            <section aria-labelledby="rs-site" className="space-y-2">
+              <h3 id="rs-site" className="font-semibold">{t('regSections.site')}</h3>
+              <div><label htmlFor="reg-site" className="text-sm text-mute">{t('registers.site')} *</label>
+                {editable && !record ? <SitePicker value={site} onChange={(s) => { setSite(s); setDirty(true); setServer((x) => { const m = { ...x }; delete m.site_id; return m; }); }} invalid={!!issues.site_id && tried} />
+                  : <div className="mono font-semibold">{site?.code ?? '—'}</div>}
+                {issues.site_id && tried && <p id="reg-site-error" role="alert" data-testid="reg-error-site_id" className="text-sm text-lateInk">{t(`regErrors.${issues.site_id.code}`, { defaultValue: t('regErrors.invalid', { field: t('registers.site') }) })}</p>}
+              </div>
+              {def.record_types && def.record_types.length > 0 && (
+                <div><label htmlFor="reg-record-type" className="text-sm text-mute">{t('registers.record_type')}</label>
+                  {editable && !record ? <select id="reg-record-type" data-testid="reg-record-type" className="input" value={rtype} onChange={(e) => { setRtype(e.target.value); setDirty(true); }}><option value="">{t('registers.choose')}</option>{def.record_types.map((x) => <option key={x} value={x}>{x.toUpperCase()}</option>)}</select>
+                    : <div className="font-semibold">{rtype ? rtype.toUpperCase() : '—'}</div>}
+                </div>
+              )}
+            </section>
+          )}
+          {sections.map((s) => (
+            <section key={s.id} aria-labelledby={`rs-${s.id}`} data-testid={`reg-section-${s.id}`} className="space-y-2">
+              <h3 id={`rs-${s.id}`} className="font-semibold">{t(`regSections.${s.id}`, { defaultValue: s.title })}</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {s.fields.filter((f) => !(rk === 'procurement' && f.code === 'members') && !(rk === 'financial_advances' && f.code === 'balance')).map((f) => {
+                  const iss = issues[f.code];
+                  const show = iss && (tried || server[f.code] || dirty);
+                  return (
+                    <div key={f.code} className={(f.type === 'text' && f.code === 'remark') || ['child_list', 'multi_user', 'multi_site'].includes(f.type) ? 'col-span-2' : ''}>
+                      <div className="flex items-center gap-1"><label htmlFor={`reg-field-${f.code}`} className="text-sm text-mute">{fieldLabel(f, lang)}{f.required ? ' *' : ''}</label>
+                        {f.list?.status === 'pending' && <span className="chip bg-waitBg text-[10px] text-waitInk" data-testid={`reg-list-pending-${f.code}`} title={t('lists.pending_hint')}>{t('lists.pending')}</span>}
+                        {record && <FieldHistory entityType="register_record" entityId={record.entity_id} field={f.code} label={fieldLabel(f, lang)} />}</div>
+                      {rk === 'car_dispatcher' && f.code === 'vehicle_id'
+                        ? <VehiclePicker value={data.vehicle_id} onChange={(v) => set('vehicle_id', v)} from={data.from_date as string} to={data.to_date as string} vehicleType={data.required_type as string} bookingId={record?.id} disabled={!editable} invalid={!!show} />
+                        : key === 'dismantle' && f.code === 'procurement_order_id'
+                        ? <DismantleOrderSelect siteId={site?.id} part={rtype} value={data[f.code]} onChange={(v) => set(f.code, v)} editable={editable} invalid={!!show} />
+                        : editable ? <FieldInput field={f} value={data[f.code]} onChange={(v) => set(f.code, v)} invalid={!!show} ctx={ctx} />
+                        : f.type === 'child_list' ? <FieldInput field={f} value={data[f.code]} onChange={() => undefined} disabled ctx={ctx} />
+                        : <div className="font-semibold whitespace-pre-line" data-testid={`reg-view-${f.code}`}>{showValue(f, data[f.code], lang, t, ctx)}</div>}
+                      {f.code === 'has_expiry' && data.has_expiry === false && <span className="chip mt-1 bg-doneBg text-doneInk" data-testid="reg-permanent">{t('registers.permanent')}</span>}
+                      {show && <p id={`reg-field-${f.code}-error`} role="alert" data-testid={`reg-error-${f.code}`} className="text-sm text-lateInk">{issueText(t, fieldLabel(f, lang), iss, labelOf)}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </form>
+        {rk === 'procurement' && (
+          <section aria-labelledby="rs-assignment" data-testid="reg-section-assignment" className="space-y-2">
+            <h3 id="rs-assignment" className="font-semibold">{t('procAssign.title')}</h3>
+            {record && <ReadinessBadge recordId={record.id} />}
+            <MembersEditor value={data.members} onChange={(v) => set('members', v)} disabled={!editable} names={Object.fromEntries(Object.entries(record?.refs?.users ?? {}).map(([id, u]) => [id, (u as { display_name: string }).display_name]))} />
+          </section>
+        )}
+        {record && rk === 'financial_advances' && <Balance record={record} />}
+        {record && rk === 'financial_advances' && record.record_type === 'advance' && record.state === 'approved' && <TopUp record={record} onDone={onCreated} />}
+        {record && rk === 'car_dispatcher' && record.record_type === 'booking' && record.state === 'approved' && <ExtendBooking record={record} onDone={onCreated} />}
+        </div>
+
+        {record && (
+          <div {...panelProps('documents', tab)}>
+            {tab === 'documents' && <RecordDocuments record={record} />}
+          </div>
+        )}
+        {record && (
+          <div {...panelProps('comments', tab)}>
+            {/* a global record (no region) has no thread yet: the server answers 422, so the box is not offered */}
+            {record.region_id ? (
+              <CommentsPanel items={comments.data?.items} loaded={comments.isSuccess} pending={addComment.isPending} error={addComment.isError ? registerErrorMessage(t, addComment.error) : null}
+                onSend={(body, ids) => addComment.mutate({ body, ...(ids.length ? { mention_user_ids: ids } : {}) })} />
+            ) : <p className="text-mute" data-testid="reg-comments-global">{t('registers.comments_global')}</p>}
+          </div>
+        )}
+        {record && (
+          <section {...panelProps('history', tab)}>
+            <h3 id="rg-history" className="mb-1 flex items-center gap-1 font-semibold"><Clock size={14} />{t('drawer.history')}</h3>
+            <ol data-testid="reg-history" className="space-y-1 text-sm">
+              {hist.data?.items.map((x) => <li key={x.id} data-previous-path={x.previous_path ? 'true' : undefined}>{t(`step.${x.action}`, { defaultValue: x.action })} · L{x.level} · {x.acted_by?.display_name}{x.self_approval ? ` · ${t('drawer.self_approval')}` : ''}{x.note ? ` — ${x.note}` : ''}{x.previous_path && <span className="chip ms-2 bg-lockBg text-lockInk" data-testid="history-previous-path">{t('drawer.previous_path')}</span>}</li>)}
+              {hist.isSuccess && !hist.data.items.length && <li className="text-mute">{t('drawer.no_history')}</li>}
+              {hist.isError && <li className="text-mute">{t('registers.history_soon')}</li>}
+            </ol>
+          </section>
+        )}
+      </div>
+      <footer className="space-y-2 border-t border-line p-4">
+        {editable && (!record || act('submit')) && (finalSelf || skipTo) && <p className="text-sm text-waitInk" data-testid="reg-skip-note">{finalSelf ? t('drawer.self_approval_note') : t('drawer.skip_note', { level: skipTo })}</p>}
+        {docsMissing.length > 0 && (!record || act('submit')) && <p className="text-sm text-lateInk" data-testid="reg-docs-missing">{t('recDocs.missing', { list: docsMissing.join(', ') })}</p>}
+        {editable && tried && issueList.length > 0 && <p className="text-sm text-lateInk" data-testid="reg-missing">{t('registers.fix_list', { list: issueList.map((c) => (c === 'site_id' ? t('registers.site') : labelOf(c))).join(', ') })}</p>}
+        <div className="flex flex-wrap gap-2">
+          {record && act('new_version') && <button className="btn" data-testid="reg-new-version" disabled={busy} onClick={() => newVersion.mutate(record, { onSuccess: (r) => { toast(t('registers.version_created')); onCreated(r.id); }, onError: fail })}><FilePlus2 size={16} />{t('registers.new_version')}</button>}
+          {record && act('transfer') && <button className="btn" data-testid="reg-transfer" disabled={busy} onClick={() => transfer.mutate({ record }, { onSuccess: () => toast(t('registers.transferred')), onError: fail })}><ArrowRightLeft size={16} />{t('registers.transfer')}</button>}
+          {record && act('void') && <button className="btn" data-testid="reg-void" disabled={busy} onClick={() => setVoiding(true)}><Ban size={16} />{t('registers.void')}</button>}
+          {record && act('cancel_snag') && <button className="btn btn-danger" data-testid="reg-cancel-snag" disabled={busy} onClick={() => setCancelling(true)}><Ban size={16} />{t('registers.cancel_snag')}</button>}
+          {record && canClaim && <button className="btn" data-testid="reg-claim" disabled={busy} onClick={() => claim.mutate({ record, op: 'claim' }, { onError: fail })}><HandMetal size={16} />{t('drawer.claim')}</button>}
+          {record && mine && <button className="btn" data-testid="reg-release" disabled={busy} onClick={() => claim.mutate({ record, op: 'release' }, { onError: fail })}><UserMinus size={16} />{t('drawer.release')}</button>}
+          {record && act('reject') && <button className="btn btn-danger" data-testid="reg-reject" disabled={busy} onClick={() => setRejecting(true)}><Undo2 size={16} />{t('approvals.reject')}</button>}
+          {editable && <button className="btn" data-testid="reg-save" disabled={busy || (!!record && !dirty)} onClick={save}><Save size={16} />{t('registers.save_draft')}</button>}
+          {editable && (!record || act('submit')) && <button className="btn btn-primary ms-auto" data-testid="reg-submit" disabled={busy || (tried && issueList.length > 0) || docsMissing.length > 0} onClick={submit}><Check size={16} />{finalSelf ? t('drawer.submit_final') : t('drawer.submit')}</button>}
+          {record && act('review') && <button className="btn btn-primary ms-auto" data-testid="reg-review" disabled={busy} onClick={() => run('review', record)}><Check size={16} />{t('approvals.pass')}</button>}
+          {record && act('approve') && <button className="btn btn-primary ms-auto" data-testid="reg-approve" disabled={busy} onClick={() => run('approve', record)}><Check size={16} />{t('approvals.approve')}</button>}
+        </div>
+      </footer>
+      {record && <RejectDialog open={rejecting} title={t('approvals.reject_title', { site: record.site_code ?? name })} onClose={() => setRejecting(false)} onSend={(note) => run('reject', record, note)} />}
+      {record && <RejectDialog open={voiding} title={t('registers.void_title')} onClose={() => setVoiding(false)} onSend={(note) => run('void', record, note)} />}
+      {record && <RejectDialog open={cancelling} title={t('registers.cancel_snag_title')} onClose={() => setCancelling(false)}
+        onSend={(reason) => cancelSnag.mutate({ record, reason }, { onSuccess: () => { toast(t('registers.cancel_snag_done')); setCancelling(false); }, onError: (e) => { setCancelling(false); fail(e); } })} />}
+    </div>
+  );
+}
+
+/** `recordId`: an id opens that record, 'new' opens an empty form, null is closed. `nav` = the ids of the list shown behind, for next/previous. */
+export function RegisterDrawer({ def, recordId, onClose, onOpen, nav }: { def: RegisterDefinition; recordId: string | null; onClose: () => void; onOpen: (id: string) => void; nav?: string[] }) {
+  const { t } = useTranslation();
+  const isNew = recordId === 'new';
+  const q = useRegisterRecord(def.register_key, isNew ? null : recordId);
+  return (
+    <DrawerFrame name="register" testid="register-drawer" wide={640} open={!!recordId} onClose={onClose} nav={nav && !isNew ? { ids: nav, current: recordId, onGo: onOpen } : undefined}>
+      {isNew ? <Body key="new" def={def} record={null} onCreated={onOpen} />
+        : q.data ? <Body key={`${q.data.id}`} def={def} record={q.data} onCreated={onOpen} />
+          : <div className="p-4"><Dialog.Title className="font-bold">{q.isError ? t('regErrors.not_found') : t('common.loading')}</Dialog.Title></div>}
+    </DrawerFrame>
+  );
+}

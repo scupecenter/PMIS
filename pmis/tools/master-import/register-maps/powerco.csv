@@ -1,0 +1,17 @@
+template_header,master_header,master_column,transform,personal,notes
+Site ID,Site ID,B,site_id,,key
+POWERCO PR No.,POWERCO PR No.|PR No.,E,,,blank in the owner file (Q468)
+POWERCO Request Date,,,,,missing in the owner file (Q468)
+POWERCO Contractor,POWERCO Contractor|Contractor,F,,,
+Survey Date,Survey Date,H,,,
+Layout Received,Layout Received,I,,,
+Layout Approved,Layout Approved,J,,,
+POWERCO Notice Date,POWERCO Notice Date,K,,,
+MOS Date,MOS Date,L,,,
+Installation Finish Date,Installation Finish Date,M,,,
+OTA Acceptance Date,OTA Acceptance Date,N,,,
+POWERCO Docs Approval Date,POWERCO Docs Approval Date,O,,,
+Meter No.,Meter No.,P,,,
+Power-On Date (Meter Charging),Power-On Date (Meter Charging)|Power-On Date,Q,,,
+Billing Conversion Date,Billing Conversion Date,R,,,
+Remark,Remark,T,,,

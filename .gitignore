@@ -1,0 +1,24 @@
+# Playwright MCP page snapshots and console logs
+.playwright-mcp/
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
+pmis/design/forms/node_modules/
+__pycache__/
+pmis/apps/web/node_modules/
+pmis/apps/web/dist/
+pmis/apps/web/test-results/
+pmis/apps/web/playwright-report/
+
+# Plugin session state (local only)
+.anchor/
+.claude-flow/
+
+# Generated outputs (regenerate locally)
+pmis/design/src/ar.json
+pmis/design/forms/out/
+pmis/tools/capacity-sizer/screenshot-*.png
+
+# ClickUp reference frames are private
+pmis/docs/clickup/frames/*.jpg
+pmis/docs/clickup/frames/*.png
+pmis/docs/clickup/clickup-config.json

@@ -1,0 +1,46 @@
+# PMIS Workspace API
+
+NestJS 11, TypeScript strict, Prisma 6 client, PostgreSQL 16. Built so far: local sign-in (ADR 0012), `/me`, users and groups
+administration. Contract: `../../contracts/openapi.yaml` (0.3.0). Every route not in that list answers problem+json 404 `not_found`.
+
+## Commands (Node 22, npm)
+
+```
+npm ci                 # installs and generates the Prisma client (postinstall)
+npm run build          # prisma generate + tsc -> dist/
+npm run start          # node dist/main.js   (needs the environment below)
+npm run dev            # tsx watch, reads ./.env when present
+npm run typecheck
+npm run lint           # also bans $queryRawUnsafe / $executeRawUnsafe in src (ADR 0003)
+npm test               # needs a local PostgreSQL 16, see below
+printf '%s' "$PASSWORD" | node dist/cli.js hash-password   # argon2id PHC hash for idm_bootstrap_admin (installer)
+TOTP_ENC_KEY=... node dist/cli.js enrol-code <user-uuid>      # one-time two-factor enrolment code and its keyed hash (tools/install/reset-two-factor.sh)
+```
+
+## Environment (see `.env.example`)
+
+`DATABASE_URL` (role `pmis_app`), `PORT` (3000), `HOST` (127.0.0.1), `COOKIE_SECURE` (true; `false` only for plain-http development),
+`LOG_HMAC_KEY` (>= 16 characters), `TOTP_ENC_KEY` (required: 32 bytes as 64 hex characters, or base64; the AES-256-GCM key of the two-factor secrets and the base of the recovery-code and enrolment-code hash keys; `openssl rand -hex 32`; the installer generates it and keeps it on update; if it is lost every enrolled user must be reset by an admin and enrol again), `PMIS_CONTEXT_KEY` (required: 32 bytes as 64 hex characters, `openssl rand -hex 32`; signs the session context of every transaction, migration 0069; the database holds the same key in `pmis_context_keys`; the installer generates it, loads it and keeps it on update; rotation in `infra/RUNBOOK.md` section 9; never log it), `NODE_ENV`, `JOBS_ENABLED` (the daily job: SLA versions that take effect and the 14-day reminder of tentative
+holidays, once at start-up and at 02:00 Africa/Johannesburg; absent = on, except when `NODE_ENV=test`). Optional limits of the template upload (contract 0.7.0): `PMIS_IMPORT_MAX_BYTES` (5242880) and `PMIS_IMPORT_MAX_ROWS` (2000). Nothing else is read.
+
+Document files and zip exports (ADR 0008): `STORAGE_DIR` (local disk, the default; the directory the API user writes) or all of `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` (and `S3_REGION`, default `us-east-1`) for S3-compatible storage such as MinIO (path-style, the bucket private). The installer can set MinIO up on the server. Files are stored under random keys (`docs/yyyy/mm/<uuid>`), never under the user's file name; local disk and the bucket use the same keys, so `mc mirror <STORAGE_DIR> <alias>/<bucket>` moves a local store into MinIO.
+
+## Tests
+
+`test/global-setup.ts` creates two fresh databases (`pmis_api_test` and `pmis_api_test_solo`, names overridable with `TEST_DB_NAME`),
+applies `prisma/migrations/0*/migration.sql` as the superuser, then `../../db/sql/app_grants.sql`, seeds the 7 regions, bootstraps an
+admin with `idm_bootstrap_admin`, and drops both afterwards (`TEST_KEEP_DB=1` keeps them). The API under test connects as `pmis_app`.
+
+```
+TEST_PG_ADMIN_URL=postgresql://postgres:<superuser password>@127.0.0.1:5432/postgres \
+TEST_PG_APP_PASSWORD=<password of the role pmis_app> \
+npm test
+```
+
+## How a request runs
+
+1. `SessionGuard`: cookie `pmis_session` -> `user_sessions` (SHA-256 of the token), idle 8 h / absolute 12 h / revoked, user status,
+   sliding touch (not for `X-PMIS-Live: 1`), CSRF on unsafe methods, then the gates `password_change_required` and `pending_assignment`.
+2. `TxInterceptor`: one transaction per request; the first statement is `app_begin` (migration 0069): a context signed with `PMIS_CONTEXT_KEY` and the transaction id, from which the database derives the regions and the admin status itself (`src/db/session-context.ts`).
+3. Handlers call the database functions (`idm_*`, `auth_local_*`); the API never writes identity tables itself.
+4. `ProblemFilter` turns every error into application/problem+json with `request_id`.
